@@ -1,4 +1,4 @@
-﻿// function that simply clicks the "accept"/"run"/"retry" buttons
+// function that simply clicks the "accept"/"run"/"retry" buttons
 
 import * as utils from './utils.js';
 
@@ -96,7 +96,7 @@ function isElementClickable(el) {
 export function click(targetSelectors, panelSelector) {
     focusOnPanel(panelSelector) // focus on the panel
     const targets = Array.isArray(targetSelectors) ? targetSelectors : [targetSelectors]
-    const docs = getDocuments();
+    const docs = utils.getDocuments();
     const discoveredElements = [];
 
     // Generic selector matching
@@ -130,7 +130,7 @@ export function click(targetSelectors, panelSelector) {
 
 export function focusOnPanel(panelSelector) {
     if (!panelSelector) return
-    const docs = getDocuments();
+    const docs = utils.getDocuments();
     for (const doc of docs) {
         const panel = doc.querySelector(panelSelector)
         if (panel) {

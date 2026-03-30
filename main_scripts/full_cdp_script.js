@@ -612,8 +612,8 @@
     function isAcceptButton(el) {
         const text = (el.textContent || "").trim().toLowerCase();
         if (text.length === 0 || text.length > 50) return false;
-        const patterns = ['accept', 'run', 'retry', 'apply', 'execute', 'confirm', 'allow once', 'allow', 'submit', 'send'];
-        const rejects = ['skip', 'reject', 'cancel', 'close', 'refine'];
+        const patterns = ['accept', 'run', 'retry', 'apply', 'execute', 'confirm', 'allow once', 'allow'];
+        const rejects = ['skip', 'reject', 'cancel', 'close', 'refine', 'send to chat', 'submit to agent'];
         if (rejects.some(r => text.includes(r))) return false;
         if (!patterns.some(p => text.includes(p))) return false;
 
@@ -807,6 +807,22 @@
                             activeEl.classList?.contains('ProseMirror')) {
                             isTyping = true;
                         }
+                    }
+
+                    // UX check: If the chat composer has text but lacks focus, consider it "drafting" and pause auto-accept
+                    if (!isTyping) {
+                        try {
+                            const panel = getAntigravityAgentPanelRoot();
+                            if (panel) {
+                                const composer = findAntigravityChatInputContentEditable(panel);
+                                if (composer) {
+                                    const draftText = getInputValue(composer);
+                                    if (draftText && draftText.trim().length > 0) {
+                                        isTyping = true; // Suspend auto-accept while user has draft text
+                                    }
+                                }
+                            }
+                        } catch (e) { /* silent fail */ }
                     }
 
                     if (!isTyping) {
