@@ -517,6 +517,75 @@
         }
     }
 
+    // --- 3.6 AUTO-SCROLL CHAT TO BOTTOM ---
+    /**
+     * Antigravity chat panel doesn't always auto-scroll to the bottom
+     * during code generation. This means Accept/Enter/Submit buttons
+     * at the bottom are outside the viewport and may not be rendered
+     * or interactable. This function scrolls all scrollable containers
+     * in the chat area to the bottom.
+     */
+    let _lastScrollTime = 0;
+    function autoScrollChatToBottom() {
+        try {
+            // Throttle: only scroll every 500ms to avoid jank
+            const now = Date.now();
+            if (now - _lastScrollTime < 500) return;
+            _lastScrollTime = now;
+
+            const docs = getDocuments();
+            for (const doc of docs) {
+                // Strategy 1: Find the Antigravity agent panel and scroll it
+                const agentPanel = getAntigravityAgentPanelRoot();
+                if (agentPanel) {
+                    // Find scrollable children inside the panel
+                    const scrollables = agentPanel.querySelectorAll('[class*="scroll"], [class*="chat"], [class*="conversation"], [class*="message"], [class*="output"], [class*="content"]');
+                    for (const el of scrollables) {
+                        if (el.scrollHeight > el.clientHeight + 50) {
+                            // This element is scrollable and has overflow
+                            const isNotAtBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) > 100;
+                            if (isNotAtBottom) {
+                                el.scrollTop = el.scrollHeight;
+                                log(`[Scroll] Scrolled container to bottom (delta: ${el.scrollHeight - el.scrollTop}px)`);
+                            }
+                        }
+                    }
+                    // Also try scrolling the panel itself
+                    if (agentPanel.scrollHeight > agentPanel.clientHeight + 50) {
+                        const isNotAtBottom = (agentPanel.scrollHeight - agentPanel.scrollTop - agentPanel.clientHeight) > 100;
+                        if (isNotAtBottom) {
+                            agentPanel.scrollTop = agentPanel.scrollHeight;
+                            log(`[Scroll] Scrolled agent panel to bottom`);
+                        }
+                    }
+                }
+
+                // Strategy 2: Generic — find any large scrollable container
+                // that looks like a chat/conversation area
+                const allScrollable = doc.querySelectorAll('div, section, main');
+                for (const el of allScrollable) {
+                    try {
+                        const style = window.getComputedStyle(el);
+                        const isScrollable = (style.overflowY === 'auto' || style.overflowY === 'scroll');
+                        const isTallEnough = el.scrollHeight > 500 && el.clientHeight > 200;
+                        const hasOverflow = el.scrollHeight > el.clientHeight + 100;
+                        
+                        if (isScrollable && isTallEnough && hasOverflow) {
+                            const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+                            // Only scroll if we're more than 150px from the bottom
+                            // This threshold prevents scroll fighting with user manual scrolling
+                            if (distanceFromBottom > 150) {
+                                el.scrollTop = el.scrollHeight;
+                            }
+                        }
+                    } catch (e) { /* ignore */ }
+                }
+            }
+        } catch (e) {
+            // Silently handle
+        }
+    }
+
     // --- 4. CLICKING LOGIC ---
     function isAcceptButton(el) {
         const text = (el.textContent || "").trim().toLowerCase();
@@ -704,9 +773,11 @@
             log(`Starting poll loop...`);
             (async function pollLoop() {
                 while (state.isRunning && state.sessionID === sid) {
-                    // Auto-expand any collapsed step-input sections first
+                    // Step 1: Scroll chat to bottom so buttons at the end become visible/rendered
+                    autoScrollChatToBottom();
+                    // Step 2: Auto-expand any collapsed step-input sections
                     autoExpandStepInputSections();
-                    // Then click accept/run/submit buttons
+                    // Step 3: Click accept/run/submit buttons
                     await performClick(['button', '[class*="button"]', '[class*="anysphere"]', '[role="button"]']);
                     // Fast polling: 300ms for snappy response (was 1000ms)
                     await new Promise(r => setTimeout(r, config.pollInterval || 300));
