@@ -2,7 +2,7 @@
 SETLOCAL EnableExtensions EnableDelayedExpansion
 
 echo ========================================================
-echo   Auto Accept Agent - Safe Process Cleaner
+echo   Antigravity Multi Purpose Agent - Safe Process Cleaner
 echo ========================================================
 echo.
 

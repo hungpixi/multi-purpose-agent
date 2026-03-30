@@ -1,4 +1,4 @@
-/**
+﻿/**
  * CDP Auto-Discovery Module
  * 
  * Automatically finds the Chrome DevTools Protocol port for the running
@@ -9,7 +9,7 @@
  * 2. Process arguments scan — Check if --remote-debugging-port was passed
  * 3. Netstat/port scan — Find listening CDP endpoints
  * 
- * Author: hungpixi (Comarai) — Fork of Rodhayl MPA
+ * Author: hungpixi (Comarai)
  */
 
 'use strict';

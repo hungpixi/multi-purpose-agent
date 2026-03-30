@@ -1,4 +1,4 @@
-/**
+﻿/**
  * MPA v3.0 PROMAX — Settings Panel Controller
  * Refactored: CSS/HTML/JS extracted to webview/ folder
  * This file is now a thin WebView controller only (~300 lines vs old 1985 lines)
@@ -24,7 +24,7 @@ class SettingsPanel {
 
         const panel = vscode.window.createWebviewPanel(
             SettingsPanel.viewType,
-            'Multi Purpose Agent Settings',
+            'Antigravity Multi Purpose Agent Settings',
             column || vscode.ViewColumn.One,
             {
                 enableScripts: true,
@@ -53,8 +53,8 @@ class SettingsPanel {
             async (message) => {
                 switch (message.command) {
                     case 'setFrequency':
-                        await this.context.globalState.update('auto-accept-frequency', message.value);
-                        vscode.commands.executeCommand('auto-accept.updateFrequency', message.value);
+                        await this.context.globalState.update('antigravity-mpa-frequency', message.value);
+                        vscode.commands.executeCommand('antigravity-mpa.updateFrequency', message.value);
                         break;
                     case 'getStats':
                         this.sendStats();
@@ -63,8 +63,8 @@ class SettingsPanel {
                         this.sendROIStats();
                         break;
                     case 'updateBannedCommands':
-                        await this.context.globalState.update('auto-accept-banned-commands', message.commands);
-                        vscode.commands.executeCommand('auto-accept.updateBannedCommands', message.commands);
+                        await this.context.globalState.update('antigravity-mpa-banned-commands', message.commands);
+                        vscode.commands.executeCommand('antigravity-mpa.updateBannedCommands', message.commands);
                         break;
                     case 'getBannedCommands':
                         this.sendBannedCommands();
@@ -82,12 +82,12 @@ class SettingsPanel {
                         this._startQueue();
                         break;
                     case 'setResumeEnabled': {
-                        const resumeConfig = vscode.workspace.getConfiguration('auto-accept.antigravityQuota.resume');
+                        const resumeConfig = vscode.workspace.getConfiguration('antigravity-mpa.antigravityQuota.resume');
                         await resumeConfig.update('enabled', message.value, vscode.ConfigurationTarget.Global);
                         break;
                     }
                     case 'setAutoContinue': {
-                        const autoContinueConfig = vscode.workspace.getConfiguration('auto-accept.autoContinue');
+                        const autoContinueConfig = vscode.workspace.getConfiguration('antigravity-mpa.autoContinue');
                         await autoContinueConfig.update('enabled', message.value, vscode.ConfigurationTarget.Global);
                         break;
                     }
@@ -101,10 +101,10 @@ class SettingsPanel {
                         this.clearLogs();
                         break;
                     case 'resetAllSettings':
-                        vscode.commands.executeCommand('auto-accept.resetSettings');
+                        vscode.commands.executeCommand('antigravity-mpa.resetSettings');
                         break;
                     case 'setAntigravityQuota':
-                        vscode.commands.executeCommand('auto-accept.toggleAntigravityQuota', message.value);
+                        vscode.commands.executeCommand('antigravity-mpa.toggleAntigravityQuota', message.value);
                         break;
                     case 'getAntigravityQuota':
                         this.sendAntigravityQuotaEnabled();
@@ -122,22 +122,22 @@ class SettingsPanel {
                         this.sendPromptHistory();
                         break;
                     case 'pauseQueue':
-                        vscode.commands.executeCommand('auto-accept.pauseQueue');
+                        vscode.commands.executeCommand('antigravity-mpa.pauseQueue');
                         break;
                     case 'resumeQueue':
-                        vscode.commands.executeCommand('auto-accept.resumeQueue');
+                        vscode.commands.executeCommand('antigravity-mpa.resumeQueue');
                         break;
                     case 'skipPrompt':
-                        vscode.commands.executeCommand('auto-accept.skipPrompt');
+                        vscode.commands.executeCommand('antigravity-mpa.skipPrompt');
                         break;
                     case 'stopQueue':
-                        vscode.commands.executeCommand('auto-accept.stopQueue');
+                        vscode.commands.executeCommand('antigravity-mpa.stopQueue');
                         break;
                     case 'setTargetConversation':
-                        vscode.commands.executeCommand('auto-accept.setTargetConversation', message.value);
+                        vscode.commands.executeCommand('antigravity-mpa.setTargetConversation', message.value);
                         break;
                     case 'setDebugMode': {
-                        const debugConfig = vscode.workspace.getConfiguration('auto-accept.debugMode');
+                        const debugConfig = vscode.workspace.getConfiguration('antigravity-mpa.debugMode');
                         await debugConfig.update('enabled', message.value, vscode.ConfigurationTarget.Global);
                         break;
                     }
@@ -145,7 +145,7 @@ class SettingsPanel {
                         this.sendDebugMode();
                         break;
                     case 'setCdpPort': {
-                        const cdpConfig = vscode.workspace.getConfiguration('auto-accept');
+                        const cdpConfig = vscode.workspace.getConfiguration('antigravity-mpa');
                         await cdpConfig.update('cdpPort', message.value, vscode.ConfigurationTarget.Global);
                         break;
                     }
@@ -169,7 +169,7 @@ class SettingsPanel {
     // PRIVATE HELPERS — Schedule
     // ========================================================
     async _updateScheduleConfig(message) {
-        const config = vscode.workspace.getConfiguration('auto-accept.schedule');
+        const config = vscode.workspace.getConfiguration('antigravity-mpa.schedule');
         await config.update('enabled', message.enabled, vscode.ConfigurationTarget.Global);
         await config.update('mode', message.mode, vscode.ConfigurationTarget.Global);
         await config.update('value', message.value, vscode.ConfigurationTarget.Global);
@@ -179,8 +179,8 @@ class SettingsPanel {
         if (message.silenceTimeout !== undefined) await config.update('silenceTimeout', message.silenceTimeout, vscode.ConfigurationTarget.Global);
         if (message.checkPromptEnabled !== undefined) await config.update('checkPrompt.enabled', message.checkPromptEnabled, vscode.ConfigurationTarget.Global);
         if (message.checkPromptText !== undefined) await config.update('checkPrompt.text', message.checkPromptText, vscode.ConfigurationTarget.Global);
-        if (message.resumeEnabled !== undefined) await vscode.workspace.getConfiguration('auto-accept.antigravityQuota.resume').update('enabled', message.resumeEnabled, vscode.ConfigurationTarget.Global);
-        if (message.autoContinueEnabled !== undefined) await vscode.workspace.getConfiguration('auto-accept.autoContinue').update('enabled', message.autoContinueEnabled, vscode.ConfigurationTarget.Global);
+        if (message.resumeEnabled !== undefined) await vscode.workspace.getConfiguration('antigravity-mpa.antigravityQuota.resume').update('enabled', message.resumeEnabled, vscode.ConfigurationTarget.Global);
+        if (message.autoContinueEnabled !== undefined) await vscode.workspace.getConfiguration('antigravity-mpa.autoContinue').update('enabled', message.autoContinueEnabled, vscode.ConfigurationTarget.Global);
     }
 
     async _saveAndStartQueue(message) {
@@ -189,10 +189,10 @@ class SettingsPanel {
             const now = Date.now();
             if (now - globalWarningDampener < 2000) return;
             globalWarningDampener = now;
-            vscode.window.showWarningMessage('Multi Purpose: Cannot start queue without prompts.');
+            vscode.window.showWarningMessage('Antigravity Multi Purpose: Cannot start queue without prompts.');
             return;
         }
-        const config = vscode.workspace.getConfiguration('auto-accept.schedule');
+        const config = vscode.workspace.getConfiguration('antigravity-mpa.schedule');
         await config.update('enabled', true, vscode.ConfigurationTarget.Global);
         if (scheduleData.mode) await config.update('mode', scheduleData.mode, vscode.ConfigurationTarget.Global);
         if (scheduleData.value) await config.update('value', scheduleData.value, vscode.ConfigurationTarget.Global);
@@ -201,58 +201,58 @@ class SettingsPanel {
         if (scheduleData.silenceTimeout) await config.update('silenceTimeout', scheduleData.silenceTimeout, vscode.ConfigurationTarget.Global);
         if (scheduleData.checkPromptEnabled !== undefined) await config.update('checkPrompt.enabled', scheduleData.checkPromptEnabled, vscode.ConfigurationTarget.Global);
         if (scheduleData.checkPromptText !== undefined) await config.update('checkPrompt.text', scheduleData.checkPromptText, vscode.ConfigurationTarget.Global);
-        if (scheduleData.resumeEnabled !== undefined) await vscode.workspace.getConfiguration('auto-accept.antigravityQuota.resume').update('enabled', scheduleData.resumeEnabled, vscode.ConfigurationTarget.Global);
-        if (scheduleData.autoContinueEnabled !== undefined) await vscode.workspace.getConfiguration('auto-accept.autoContinue').update('enabled', scheduleData.autoContinueEnabled, vscode.ConfigurationTarget.Global);
-        vscode.commands.executeCommand('auto-accept.startQueue', { source: 'manual' });
+        if (scheduleData.resumeEnabled !== undefined) await vscode.workspace.getConfiguration('antigravity-mpa.antigravityQuota.resume').update('enabled', scheduleData.resumeEnabled, vscode.ConfigurationTarget.Global);
+        if (scheduleData.autoContinueEnabled !== undefined) await vscode.workspace.getConfiguration('antigravity-mpa.autoContinue').update('enabled', scheduleData.autoContinueEnabled, vscode.ConfigurationTarget.Global);
+        vscode.commands.executeCommand('antigravity-mpa.startQueue', { source: 'manual' });
     }
 
     _startQueue() {
-        const currentPrompts = vscode.workspace.getConfiguration('auto-accept.schedule').get('prompts', []);
+        const currentPrompts = vscode.workspace.getConfiguration('antigravity-mpa.schedule').get('prompts', []);
         if (!currentPrompts || currentPrompts.length === 0) {
             const now = Date.now();
             if (now - globalWarningDampener < 2000) return;
             globalWarningDampener = now;
-            vscode.window.showWarningMessage('Multi Purpose: Prompt queue is empty. Add prompts first.');
+            vscode.window.showWarningMessage('Antigravity Multi Purpose: Prompt queue is empty. Add prompts first.');
             return;
         }
-        vscode.commands.executeCommand('auto-accept.startQueue', { source: 'manual' });
+        vscode.commands.executeCommand('antigravity-mpa.startQueue', { source: 'manual' });
     }
 
     // ========================================================
     // DATA SENDERS — Push data to WebView
     // ========================================================
     sendStats() {
-        const stats = this.context.globalState.get('auto-accept-stats', { clicks: 0, sessions: 0, lastSession: null });
-        const frequency = this.context.globalState.get('auto-accept-frequency', 1000);
+        const stats = this.context.globalState.get('antigravity-mpa-stats', { clicks: 0, sessions: 0, lastSession: null });
+        const frequency = this.context.globalState.get('antigravity-mpa-frequency', 1000);
         this.panel.webview.postMessage({ command: 'updateStats', stats, frequency });
     }
 
     async sendROIStats() {
         try {
-            const roiStats = await vscode.commands.executeCommand('auto-accept.getROIStats');
+            const roiStats = await vscode.commands.executeCommand('antigravity-mpa.getROIStats');
             this.panel.webview.postMessage({ command: 'updateROIStats', roiStats });
         } catch (e) { /* ROI stats not available */ }
     }
 
     sendDebugMode() {
-        const config = vscode.workspace.getConfiguration('auto-accept.debugMode');
+        const config = vscode.workspace.getConfiguration('antigravity-mpa.debugMode');
         this.panel.webview.postMessage({ command: 'updateDebugMode', enabled: config.get('enabled', true) });
     }
 
     sendCdpPort() {
-        const config = vscode.workspace.getConfiguration('auto-accept');
+        const config = vscode.workspace.getConfiguration('antigravity-mpa');
         this.panel.webview.postMessage({ command: 'updateCdpPort', port: config.get('cdpPort', 9004) });
     }
 
     sendBannedCommands() {
         const defaultBannedCommands = ['rm -rf /', 'rm -rf ~', 'rm -rf *', 'format c:', 'del /f /s /q', 'rmdir /s /q', ':(){:|:&};:', 'dd if=', 'mkfs.', '> /dev/sda', 'chmod -R 777 /'];
-        const bannedCommands = this.context.globalState.get('auto-accept-banned-commands', defaultBannedCommands);
+        const bannedCommands = this.context.globalState.get('antigravity-mpa-banned-commands', defaultBannedCommands);
         this.panel.webview.postMessage({ command: 'updateBannedCommands', bannedCommands });
     }
 
     sendSchedule() {
-        const config = vscode.workspace.getConfiguration('auto-accept.schedule');
-        const resumeConfig = vscode.workspace.getConfiguration('auto-accept.antigravityQuota.resume');
+        const config = vscode.workspace.getConfiguration('antigravity-mpa.schedule');
+        const resumeConfig = vscode.workspace.getConfiguration('antigravity-mpa.antigravityQuota.resume');
         this.panel.webview.postMessage({
             command: 'updateSchedule',
             schedule: {
@@ -261,14 +261,14 @@ class SettingsPanel {
                 queueMode: config.get('queueMode', 'consume'), silenceTimeout: config.get('silenceTimeout', 30),
                 checkPromptEnabled: config.get('checkPrompt.enabled', false), checkPromptText: config.get('checkPrompt.text', ''),
                 resumeEnabled: resumeConfig.get('enabled', true),
-                autoContinueEnabled: vscode.workspace.getConfiguration('auto-accept.autoContinue').get('enabled', false)
+                autoContinueEnabled: vscode.workspace.getConfiguration('antigravity-mpa.autoContinue').get('enabled', false)
             }
         });
     }
 
     async sendAntigravityQuotaEnabled() {
         try {
-            const enabled = await vscode.commands.executeCommand('auto-accept.getAntigravityQuotaEnabled');
+            const enabled = await vscode.commands.executeCommand('antigravity-mpa.getAntigravityQuotaEnabled');
             this.panel.webview.postMessage({ command: 'updateAntigravityQuotaEnabled', enabled: enabled !== false });
         } catch (e) {
             this.panel.webview.postMessage({ command: 'updateAntigravityQuotaEnabled', enabled: true });
@@ -277,7 +277,7 @@ class SettingsPanel {
 
     async sendAntigravityQuotaStatus() {
         try {
-            const snapshot = await vscode.commands.executeCommand('auto-accept.getAntigravityQuota');
+            const snapshot = await vscode.commands.executeCommand('antigravity-mpa.getAntigravityQuota');
             this.panel.webview.postMessage({ command: 'updateAntigravityQuotaStatus', snapshot });
         } catch (e) {
             this.panel.webview.postMessage({ command: 'updateAntigravityQuotaStatus', snapshot: null, error: e.message });
@@ -286,7 +286,7 @@ class SettingsPanel {
 
     async sendQueueStatus() {
         try {
-            const status = await vscode.commands.executeCommand('auto-accept.getQueueStatus');
+            const status = await vscode.commands.executeCommand('antigravity-mpa.getQueueStatus');
             this.panel.webview.postMessage({ command: 'updateQueueStatus', status: status || { enabled: false, isRunningQueue: false, queueLength: 0, queueIndex: 0, isQuotaExhausted: false } });
         } catch (e) {
             this.panel.webview.postMessage({ command: 'updateQueueStatus', status: { enabled: false, isRunningQueue: false, queueLength: 0, queueIndex: 0, isQuotaExhausted: false } });
@@ -295,14 +295,14 @@ class SettingsPanel {
 
     async sendConversations() {
         try {
-            const conversations = await vscode.commands.executeCommand('auto-accept.getConversations');
+            const conversations = await vscode.commands.executeCommand('antigravity-mpa.getConversations');
             this.panel.webview.postMessage({ command: 'updateConversations', conversations: conversations || [] });
         } catch (e) { this.panel.webview.postMessage({ command: 'updateConversations', conversations: [] }); }
     }
 
     async sendPromptHistory() {
         try {
-            const history = await vscode.commands.executeCommand('auto-accept.getPromptHistory');
+            const history = await vscode.commands.executeCommand('antigravity-mpa.getPromptHistory');
             this.panel.webview.postMessage({ command: 'updatePromptHistory', history: history || [] });
         } catch (e) { this.panel.webview.postMessage({ command: 'updatePromptHistory', history: [] }); }
     }
@@ -380,7 +380,7 @@ class SettingsPanel {
     // DEBUG UI BRIDGE
     // ========================================================
     handleDebugUIAction(action) {
-        const debugEnabled = vscode.workspace.getConfiguration('auto-accept.debugMode').get('enabled', false);
+        const debugEnabled = vscode.workspace.getConfiguration('antigravity-mpa.debugMode').get('enabled', false);
         if (!debugEnabled) return;
         this.panel.webview.postMessage({ command: 'executeDebugUIAction', action });
     }
@@ -553,7 +553,7 @@ class SettingsPanel {
 
         <div class="section">
             <div class="section-label">🛡️ Safety Rules</div>
-            Patterns that will NEVER be auto-accepted.
+            Patterns that will NEVER be antigravity-mpaed.
             <textarea id="bannedCommandsInput" placeholder="rm -rf /&#10;format c:&#10;del /f /s /q"></textarea>
             <div style="display: flex; gap: 12px; margin-top: 20px;">
                 <button id="saveBannedBtn" class="btn-primary" style="flex: 2;">Update Rules</button>

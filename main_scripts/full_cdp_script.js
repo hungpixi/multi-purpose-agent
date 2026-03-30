@@ -1,7 +1,7 @@
-/**
+﻿/**
  * FULL CDP CORE BUNDLE
  * Monolithic script for browser-side injection.
- * Combines utils, analytics, auto-accept, and lifecycle management.
+ * Combines utils, analytics, antigravity-mpa, and lifecycle management.
  */
 (function () {
     "use strict";

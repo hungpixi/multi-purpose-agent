@@ -1,4 +1,4 @@
-// function that simply clicks the "accept"/"run"/"retry" buttons
+﻿// function that simply clicks the "accept"/"run"/"retry" buttons
 
 import * as utils from './utils.js';
 

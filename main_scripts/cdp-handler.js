@@ -1,4 +1,4 @@
-const WebSocket = require('ws');
+﻿const WebSocket = require('ws');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -116,7 +116,7 @@ class CDPHandler {
                             if (!p.webSocketDebuggerUrl) return false;
                             if (p.type !== 'page' && p.type !== 'webview' && p.type !== 'iframe') return false;
                             // Exclude our Settings Panel webview
-                            if (p.title && p.title.includes('Multi Purpose Agent Settings')) return false;
+                            if (p.title && p.title.includes('Antigravity Multi Purpose Agent Settings')) return false;
                             return true;
                         });
                         resolve(filtered);

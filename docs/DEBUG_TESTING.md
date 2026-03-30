@@ -1,4 +1,4 @@
-# Debug Testing Infrastructure
+﻿# Debug Testing Infrastructure
 
 This document describes the comprehensive debug testing infrastructure for programmatically testing all extension functionality, including UI automation.
 
@@ -43,18 +43,18 @@ This enables 1-to-1 graphical testing that mirrors exactly what users click and 
 
 ### Prerequisites
 1. Extension must be running in VS Code
-2. Debug mode enabled (default: `true` via `auto-accept.debugMode.enabled`)
+2. Debug mode enabled (default: `true` via `antigravity-mpa.debugMode.enabled`)
 
 To enable debug mode:
 
 ```json
-"auto-accept.debugMode.enabled": true
+"antigravity-mpa.debugMode.enabled": true
 ```
 
 ### Running the Test Suite
 
 ```bash
-cd c:\Users\rulfe\GitHub\auto-accept-agent
+cd c:\Users\rulfe\GitHub\antigravity-mpa-agent
 node tests/comprehensive_test.js
 ```
 
@@ -153,7 +153,7 @@ await sendCommand('uiAction', { type: 'listElements' });
 Most test scripts call the HTTP debug server. Internally, you can also execute debug actions via VS Code commands:
 
 ```javascript
-await vscode.commands.executeCommand('auto-accept.debugCommand', 'actionName', { params });
+await vscode.commands.executeCommand('antigravity-mpa.debugCommand', 'actionName', { params });
 ```
 
 ## Full State Snapshot
@@ -161,7 +161,7 @@ await vscode.commands.executeCommand('auto-accept.debugCommand', 'actionName', {
 `getFullState` returns everything at once:
 
 ```javascript
-const result = await vscode.commands.executeCommand('auto-accept.debugCommand', 'getFullState');
+const result = await vscode.commands.executeCommand('antigravity-mpa.debugCommand', 'getFullState');
 ```
 
 ## Example: Writing Custom Tests

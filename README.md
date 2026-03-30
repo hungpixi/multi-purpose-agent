@@ -1,6 +1,6 @@
-# 🤖 Multi Purpose Agent — Hungpixi Edition v2.0
+﻿# 🤖 Antigravity Multi Purpose Agent v2.0
 
-> **Fork cải tiến** từ [Rodhayl/multi-purpose-agent](https://github.com/Rodhayl/multi-purpose-agent) bởi [hungpixi](https://github.com/hungpixi) | [Comarai Agency](https://comarai.com)
+> **Engineered by** [hungpixi](https://github.com/hungpixi) | [Comarai Agency](https://comarai.com)
 
 [![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/hungpixi/multi-purpose-agent)
 [![License](https://img.shields.io/badge/license-ISC-green.svg)](LICENSE.md)
@@ -8,9 +8,9 @@
 
 ## 🎯 Tại Sao Fork Này Tồn Tại?
 
-Extension gốc **Multi Purpose Agent** của Rodhayl là công cụ auto-accept tuyệt vời cho các IDE dựa trên VS Code. Tuy nhiên, khi sử dụng thực tế trên **Antigravity IDE**, tôi gặp phải nhiều vấn đề pain-point mà bản gốc chưa giải quyết:
+Trên thực tế khi sử dụng **Antigravity IDE** hoặc Cursor/Windsurf, các luồng xử lý Agent Automation hay gặp vấn đề về tốc độ click button và CDP discovery. Phiên bản này (PROMAX) ra đời khắc phục triệt để các pain-point:
 
-| Vấn đề gốc | Bản gốc | ✅ Hungpixi Edition |
+| Vấn đề cũ | Bản cơ bản | ✅ Hungpixi Edition |
 |-------------|---------|---------------------|
 | CMD popup hiện mỗi lần restart | `.bat` file flash CMD window | Pure PowerShell, `windowsHide: true` — zero popup |
 | Accept chậm 1-2 giây | Poll interval 2000ms | Poll 300ms — gần như instant |
@@ -21,8 +21,8 @@ Extension gốc **Multi Purpose Agent** của Rodhayl là công cụ auto-accept
 ## 💡 Quá Trình Tư Duy
 
 ### 1. Phân Tích Root Cause
-Reverse-engineer VSIX gốc bằng cách extract → đọc source → trace flow:
-- `relauncher.js`: Tạo `.bat` file → `spawn powershell` → run batch → CMD flash → Antigravity.exe không tìm thấy
+Mổ xẻ luồng chạy cũ của các Extension Auto Clicker:
+- Giao tiếp CDP thường tạo `.bat` file → `spawn powershell` → run batch → CMD flash → IDE không tìm thấy listener.
 - `full_cdp_script.js`: `pollInterval || 1000` + `pollFrequency = 2000` — quá chậm
 - Không có logic auto-expand cho UI collapsed states
 
@@ -66,10 +66,10 @@ npx vsce package
 
 | Setting | Default | Mô tả |
 |---------|---------|--------|
-| `auto-accept.cdpPort` | `0` (auto) | Chrome DevTools Protocol port. 0 = auto-discover |
-| `auto-accept.schedule.enabled` | `false` | Bật scheduled prompts |
-| `auto-accept.schedule.silenceTimeout` | `30` | Giây chờ trước khi coi task hoàn thành |
-| `auto-accept.antigravityQuota.enabled` | `true` | Hiển thị Antigravity quota trên status bar |
+| `antigravity-mpa.cdpPort` | `0` (auto) | Chrome DevTools Protocol port. 0 = auto-discover |
+| `antigravity-mpa.schedule.enabled` | `false` | Bật scheduled prompts |
+| `antigravity-mpa.schedule.silenceTimeout` | `30` | Giây chờ trước khi coi task hoàn thành |
+| `antigravity-mpa.antigravityQuota.enabled` | `true` | Hiển thị Antigravity quota trên status bar |
 
 ## 📁 Cấu Trúc Project
 
@@ -100,8 +100,7 @@ npx vsce package
 
 ## 📜 Credits
 
-- **Original Author**: [Rodhayl](https://github.com/Rodhayl/multi-purpose-agent)  
-- **Fork & Improvements**: [hungpixi](https://github.com/hungpixi) — [Comarai Agency](https://comarai.com)
+- **Author**: [hungpixi](https://github.com/hungpixi) — [Comarai Agency](https://comarai.com)
 
 ## 📄 License
 
@@ -113,7 +112,7 @@ ISC License — xem [LICENSE.md](LICENSE.md)
 
 | Bạn cần | Chúng tôi đã làm ✅ |
 |---------|---------------------|
-| Auto-accept cho Cursor/Windsurf | Fork + customize extension |
+| antigravity-mpa cho Cursor/Windsurf | Fork + customize extension |
 | Workflow automation | Scheduled prompts + queue |
 | Custom AI agent integration | CDP handler + debug API |
 | IDE branding | Custom status bar + panel |

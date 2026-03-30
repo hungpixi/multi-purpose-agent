@@ -1,4 +1,4 @@
-// instantiate gloabl state tracker with default fallback
+﻿// instantiate gloabl state tracker with default fallback
 window.__autoAcceptState = window.__autoAcceptState || {
     isRunning: false,
     tabNames: [],

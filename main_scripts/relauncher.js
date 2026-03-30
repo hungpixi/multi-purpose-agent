@@ -1,4 +1,4 @@
-const vscode = require('vscode');
+﻿const vscode = require('vscode');
 const { execSync, spawn } = require('child_process');
 const os = require('os');
 const fs = require('fs');
@@ -58,7 +58,7 @@ class Relauncher {
 
         // Show a brief non-modal notification (auto-dismisses)
         vscode.window.showInformationMessage(
-            'Multi Purpose Agent: Restarting to enable automation...',
+            'Antigravity Multi Purpose Agent: Restarting to enable automation...',
         );
 
         // Wait a moment for the notification to show

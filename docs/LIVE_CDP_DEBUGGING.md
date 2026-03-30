@@ -1,4 +1,4 @@
-# Live CDP Debugging
+﻿# Live CDP Debugging
 
 This document describes the Live CDP Debugging feature for troubleshooting browser-side issues without requiring extension rebuilds.
 
@@ -132,7 +132,7 @@ console.log(connResult);
 
 ### Step 2: Verify Script Injection
 
-Check if the auto-accept script is injected:
+Check if the antigravity-mpa script is injected:
 
 ```javascript
 const fnCheck = await evalInBrowser('typeof window.__autoAcceptSendPrompt');
