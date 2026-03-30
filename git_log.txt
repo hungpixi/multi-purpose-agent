@@ -1,0 +1,7 @@
+﻿669ac9b fix: call getDocuments with utils prefix
+e1c1db7 fix(ux): Pause auto-scroll when user manually scrolls up to read
+fcca611 feat(isolation): Multi-Instance Architecture & typing protection
+eb224c7 feat(rebrand): Antigravity Multi Purpose Agent 2.0
+f7d3b51 refactor(v3.0): decompose settings-panel 1985-line monolith into modular architecture
+cacdbf4 feat: auto-scroll chat to bottom before scanning buttons
+e6e2199 feat: Multi Purpose Agent v2.0 Hungpixi Edition - Fix restart, speed, step input

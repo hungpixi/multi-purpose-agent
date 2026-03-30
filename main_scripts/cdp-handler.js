@@ -1,4 +1,4 @@
-﻿const WebSocket = require('ws');
+const WebSocket = require('ws');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -150,7 +150,7 @@ class CDPHandler {
 
         try {
             if (!conn.injected) {
-                const scriptPath = path.join(__dirname, '..', 'main_scripts', 'full_cdp_script.js');
+                const scriptPath = path.join(__dirname, '..', 'dist', 'full_cdp_script.js');
                 const script = fs.readFileSync(scriptPath, 'utf8');
                 // Initial injection can take longer due to the size of the script.
                 await this._evaluate(id, script, 15000);

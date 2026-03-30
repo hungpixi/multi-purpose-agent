@@ -2,7 +2,7 @@
     "name": "hungpixi-multi-purpose-agent",
     "displayName": "Antigravity Multi Purpose Agent",
     "description": "Antigravity Multi Purpose Agent với khả năng auto-CDP logic. Engineered by hungpixi/Comarai.",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "publisher": "hungpixi",
     "icon": "media/icon.png",
     "repository": {
@@ -22,7 +22,7 @@
     ],
     "scripts": {
         "test": "node tests/scheduler.test.js",
-        "compile": "esbuild extension.js --bundle --outfile=dist/extension.js --external:vscode --platform=node --format=cjs",
+        "compile": "esbuild extension.js --bundle --outfile=dist/extension.js --external:vscode --platform=node --format=cjs && esbuild main_scripts/cdp/index.js --bundle --outfile=dist/full_cdp_script.js --format=iife",
         "vscode:prepublish": "npm run compile",
         "package": "npx vsce package"
     },

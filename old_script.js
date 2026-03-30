@@ -1,7 +1,7 @@
 /**
  * FULL CDP CORE BUNDLE
  * Monolithic script for browser-side injection.
- * Combines utils, analytics, antigravity-mpa, and lifecycle management.
+ * Combines utils, analytics, auto-accept, and lifecycle management.
  */
 (function () {
     "use strict";
@@ -519,37 +519,15 @@
 
     // --- 3.6 AUTO-SCROLL CHAT TO BOTTOM ---
     /**
-     * Antigravity chat panel doesn't always auto-scroll to bottom.
-     * We need to pause auto-scroll if the user is actively reading/scrolling.
+     * Antigravity chat panel doesn't always auto-scroll to the bottom
+     * during code generation. This means Accept/Enter/Submit buttons
+     * at the bottom are outside the viewport and may not be rendered
+     * or interactable. This function scrolls all scrollable containers
+     * in the chat area to the bottom.
      */
     let _lastScrollTime = 0;
-    let _userPauseAutoScroll = false;
-    let _userResumeTimeout = null;
-
-    function _pauseAutoScroll() {
-        _userPauseAutoScroll = true;
-        clearTimeout(_userResumeTimeout);
-        _userResumeTimeout = setTimeout(() => {
-            _userPauseAutoScroll = false;
-        }, 15000); // Pause for 15s after last manual scroll wheel action
-    }
-
-    // Attach once to window
-    if (!window.__autoScrollListenersAdded) {
-        window.addEventListener('wheel', _pauseAutoScroll, { passive: true, capture: true });
-        window.addEventListener('touchmove', _pauseAutoScroll, { passive: true, capture: true });
-        window.addEventListener('keydown', (e) => {
-            if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
-                _pauseAutoScroll();
-            }
-        }, { passive: true, capture: true });
-        window.__autoScrollListenersAdded = true;
-    }
-
     function autoScrollChatToBottom() {
         try {
-            if (_userPauseAutoScroll) return; // UX Fix: Do not fight the user!
-
             // Throttle: only scroll every 500ms to avoid jank
             const now = Date.now();
             if (now - _lastScrollTime < 500) return;
@@ -612,8 +590,8 @@
     function isAcceptButton(el) {
         const text = (el.textContent || "").trim().toLowerCase();
         if (text.length === 0 || text.length > 50) return false;
-        const patterns = ['accept', 'run', 'retry', 'apply', 'execute', 'confirm', 'allow once', 'allow'];
-        const rejects = ['skip', 'reject', 'cancel', 'close', 'refine', 'send to chat', 'submit to agent'];
+        const patterns = ['accept', 'run', 'retry', 'apply', 'execute', 'confirm', 'allow once', 'allow', 'submit', 'send'];
+        const rejects = ['skip', 'reject', 'cancel', 'close', 'refine'];
         if (rejects.some(r => text.includes(r))) return false;
         if (!patterns.some(p => text.includes(p))) return false;
 
@@ -795,45 +773,12 @@
             log(`Starting poll loop...`);
             (async function pollLoop() {
                 while (state.isRunning && state.sessionID === sid) {
-                    // Check if user is actively typing in an input field in this context
-                    const activeEl = document.activeElement;
-                    let isTyping = false;
-                    
-                    if (activeEl && activeEl !== document.body) {
-                        const tagName = activeEl.tagName.toUpperCase();
-                        if (tagName === 'TEXTAREA' || 
-                            (tagName === 'INPUT' && !['button', 'submit', 'radio', 'checkbox'].includes(activeEl.type)) || 
-                            activeEl.isContentEditable || 
-                            activeEl.classList?.contains('ProseMirror')) {
-                            isTyping = true;
-                        }
-                    }
-
-                    // UX check: If the chat composer has text but lacks focus, consider it "drafting" and pause auto-accept
-                    if (!isTyping) {
-                        try {
-                            const panel = getAntigravityAgentPanelRoot();
-                            if (panel) {
-                                const composer = findAntigravityChatInputContentEditable(panel);
-                                if (composer) {
-                                    const draftText = getInputValue(composer);
-                                    if (draftText && draftText.trim().length > 0) {
-                                        isTyping = true; // Suspend auto-accept while user has draft text
-                                    }
-                                }
-                            }
-                        } catch (e) { /* silent fail */ }
-                    }
-
-                    if (!isTyping) {
-                        // Step 1: Scroll chat to bottom so buttons at the end become visible/rendered
-                        autoScrollChatToBottom();
-                        // Step 2: Auto-expand any collapsed step-input sections
-                        autoExpandStepInputSections();
-                        // Step 3: Click accept/run/submit buttons
-                        await performClick(['button', '[class*="button"]', '[class*="anysphere"]', '[role="button"]']);
-                    }
-                    
+                    // Step 1: Scroll chat to bottom so buttons at the end become visible/rendered
+                    autoScrollChatToBottom();
+                    // Step 2: Auto-expand any collapsed step-input sections
+                    autoExpandStepInputSections();
+                    // Step 3: Click accept/run/submit buttons
+                    await performClick(['button', '[class*="button"]', '[class*="anysphere"]', '[role="button"]']);
                     // Fast polling: 300ms for snappy response (was 1000ms)
                     await new Promise(r => setTimeout(r, config.pollInterval || 300));
                 }
