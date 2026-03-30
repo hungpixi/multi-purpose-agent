@@ -1,0 +1,342 @@
+/* MPA v3.0 PROMAX — Dashboard Styles */
+/* Extracted from settings-panel.js monolith */
+
+* { box-sizing: border-box; }
+
+:root {
+    --bg: #070b14;
+    --card-bg: #0d1324;
+    --border: rgba(148, 163, 184, 0.16);
+    --border-hover: rgba(56, 189, 248, 0.32);
+    --accent: #38bdf8;
+    --accent-soft: rgba(56, 189, 248, 0.12);
+    --green: #34d399;
+    --green-soft: rgba(52, 211, 153, 0.14);
+    --danger: #fb7185;
+    --danger-soft: rgba(251, 113, 133, 0.14);
+    --fg: #e7eefc;
+    --fg-dim: rgba(231, 238, 252, 0.68);
+    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+}
+
+/* === Prompt List === */
+.prompt-list-container {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 14px;
+    margin-bottom: 12px;
+}
+.prompt-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+.prompt-item {
+    display: flex;
+    align-items: center;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: var(--radius-sm);
+    padding: 10px;
+    transition: all 0.2s;
+}
+.prompt-item:hover {
+    background: rgba(255,255,255,0.05);
+    border-color: var(--border);
+}
+.prompt-item.dragging {
+    opacity: 0.5;
+    background: var(--accent-soft);
+    border-color: var(--accent);
+}
+.prompt-handle {
+    cursor: grab;
+    opacity: 0.4;
+    padding: 4px 8px;
+    font-size: 16px;
+    user-select: none;
+}
+.prompt-handle:hover {
+    opacity: 0.8;
+    color: var(--accent);
+}
+.prompt-content {
+    flex: 1;
+    font-size: 13px;
+    margin: 0 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.prompt-delete {
+    cursor: pointer;
+    opacity: 0.4;
+    padding: 4px 8px;
+    color: #ef4444;
+    font-size: 16px;
+    border-radius: 4px;
+}
+.prompt-delete:hover {
+    opacity: 1;
+    background: rgba(239, 68, 68, 0.1);
+}
+.prompt-add-row {
+    display: flex;
+    gap: 8px;
+}
+.prompt-input {
+    flex: 1;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+}
+.prompt-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+.prompt-empty {
+    text-align: center;
+    padding: 20px;
+    font-size: 12px;
+    opacity: 0.5;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+}
+
+/* === Body & Layout === */
+body {
+    font-family: var(--font);
+    background: radial-gradient(900px 500px at 50% -10%, rgba(56, 189, 248, 0.16), transparent 60%),
+                radial-gradient(900px 500px at 0% 30%, rgba(52, 211, 153, 0.08), transparent 55%),
+                var(--bg);
+    color: var(--fg);
+    margin: 0;
+    padding: 32px 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+}
+.container {
+    max-width: 760px;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+/* === Header === */
+.header {
+    text-align: center;
+    margin-bottom: 8px;
+}
+.header h1 {
+    font-size: 30px;
+    font-weight: 800;
+    margin: 0;
+    letter-spacing: -0.5px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+.badge {
+    background: var(--accent);
+    color: white;
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.12), 0 12px 26px rgba(0,0,0,0.4);
+}
+.subtitle {
+    color: var(--fg-dim);
+    font-size: 14px;
+    margin-top: 8px;
+}
+
+/* === Sections === */
+.section {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 26px;
+    transition: border-color 0.3s ease;
+    box-shadow: var(--shadow);
+}
+.section:hover {
+    border-color: var(--border-hover);
+}
+.section-label {
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* === Impact Grid === */
+.impact-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+.impact-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-md);
+    padding: 18px 14px;
+    text-align: center;
+    transition: transform 0.2s ease;
+}
+.impact-card:hover {
+    transform: translateY(-2px);
+}
+.stat-val {
+    font-size: 32px;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 8px;
+    font-variant-numeric: tabular-nums;
+}
+.stat-label {
+    font-size: 11px;
+    color: var(--fg-dim);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* === Inputs & Buttons === */
+input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.1);
+}
+textarea {
+    width: 100%;
+    min-height: 140px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    color: var(--fg);
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    padding: 14px;
+    resize: vertical;
+    outline: none;
+}
+textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    text-decoration: none;
+}
+.btn-primary:hover {
+    filter: brightness(1.2);
+    transform: scale(1.01);
+}
+.btn-outline {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.btn-outline:hover {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+}
+.btn-danger {
+    background: transparent;
+    border: 1px solid rgba(251, 113, 133, 0.35);
+    color: var(--danger);
+    padding: 10px 14px;
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.btn-danger:hover {
+    background: var(--danger-soft);
+    border-color: rgba(251, 113, 133, 0.55);
+}
+
+.link-secondary {
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: none;
+    font-size: 13px;
+    display: block;
+    text-align: center;
+    margin-top: 16px;
+}
+.link-secondary:hover { text-decoration: underline; }
+
+.locked {
+    opacity: 0.5;
+    pointer-events: none;
+    filter: grayscale(1);
+}
+
+/* === Toggle Switch === */
+.switch { position: relative; display: inline-block; width: 46px; height: 24px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(255,255,255,0.12); transition: .2s; border-radius: 999px; border: 1px solid rgba(255,255,255,0.08); }
+.slider:before { position: absolute; content: ""; height: 18px; width: 18px; left: 2px; bottom: 2px; background-color: rgba(255,255,255,0.92); transition: .2s; border-radius: 50%; }
+input:checked + .slider { background-color: var(--accent); }
+input:checked + .slider:before { transform: translateX(22px); }
+
+/* === Branding Footer === */
+.footer {
+    text-align: center;
+    padding: 24px 0;
+    font-size: 11px;
+    opacity: 0.4;
+}
+.footer a {
+    color: var(--accent);
+    text-decoration: none;
+}
+.footer a:hover {
+    text-decoration: underline;
+}
