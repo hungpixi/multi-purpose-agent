@@ -519,15 +519,37 @@
 
     // --- 3.6 AUTO-SCROLL CHAT TO BOTTOM ---
     /**
-     * Antigravity chat panel doesn't always auto-scroll to the bottom
-     * during code generation. This means Accept/Enter/Submit buttons
-     * at the bottom are outside the viewport and may not be rendered
-     * or interactable. This function scrolls all scrollable containers
-     * in the chat area to the bottom.
+     * Antigravity chat panel doesn't always auto-scroll to bottom.
+     * We need to pause auto-scroll if the user is actively reading/scrolling.
      */
     let _lastScrollTime = 0;
+    let _userPauseAutoScroll = false;
+    let _userResumeTimeout = null;
+
+    function _pauseAutoScroll() {
+        _userPauseAutoScroll = true;
+        clearTimeout(_userResumeTimeout);
+        _userResumeTimeout = setTimeout(() => {
+            _userPauseAutoScroll = false;
+        }, 15000); // Pause for 15s after last manual scroll wheel action
+    }
+
+    // Attach once to window
+    if (!window.__autoScrollListenersAdded) {
+        window.addEventListener('wheel', _pauseAutoScroll, { passive: true, capture: true });
+        window.addEventListener('touchmove', _pauseAutoScroll, { passive: true, capture: true });
+        window.addEventListener('keydown', (e) => {
+            if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
+                _pauseAutoScroll();
+            }
+        }, { passive: true, capture: true });
+        window.__autoScrollListenersAdded = true;
+    }
+
     function autoScrollChatToBottom() {
         try {
+            if (_userPauseAutoScroll) return; // UX Fix: Do not fight the user!
+
             // Throttle: only scroll every 500ms to avoid jank
             const now = Date.now();
             if (now - _lastScrollTime < 500) return;
