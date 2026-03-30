@@ -1,4 +1,4 @@
-﻿/**
+/**
  * CDP Auto-Discovery Module
  * 
  * Automatically finds the Chrome DevTools Protocol port for the running
@@ -167,7 +167,37 @@ class CDPDiscovery {
                 }
             }
 
-            // Check via shell command for Antigravity process
+            // Next strategy: Check Parent Process argument directly! (The exact Antigravity IDE window hosting us)
+            const parentPid = process.env.VSCODE_PID || process.ppid;
+            if (parentPid && this.platform === 'win32') {
+                try {
+                    const output = execSync(
+                        `wmic process where "ProcessId=${parentPid}" get CommandLine /format:list`,
+                        { encoding: 'utf8', timeout: 5000, windowsHide: true }
+                    );
+                    const cmdMatch = output.match(/--remote-debugging-port=(\d+)/);
+                    if (cmdMatch) {
+                        const port = parseInt(cmdMatch[1], 10);
+                        if (port > 0) {
+                            this.log(`Found port in Antigravity Parent process args: ${port}`);
+                            return port;
+                        }
+                    }
+                } catch (e) {
+                    try {
+                        const output = execSync(
+                            `powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \\"ProcessId=${parentPid}\\").CommandLine"`,
+                            { encoding: 'utf8', timeout: 5000, windowsHide: true }
+                        );
+                        const psMatch = output.match(/--remote-debugging-port=(\d+)/);
+                        if (psMatch) {
+                            return parseInt(psMatch[1], 10);
+                        }
+                    } catch (e2) { /* ignore */ }
+                }
+            }
+
+            // Fallback: Check via shell command for Antigravity process
             if (this.platform === 'win32') {
                 try {
                     const output = execSync(
@@ -224,14 +254,20 @@ class CDPDiscovery {
             let candidatePorts = [];
 
             if (this.platform === 'win32') {
-                // Get Antigravity PID first
+                // Get Antigravity PID
                 try {
-                    const pidOutput = execSync(
-                        'powershell -NoProfile -Command "(Get-Process -Name *Antigravity* -ErrorAction SilentlyContinue | Select-Object -First 1).Id"',
-                        { encoding: 'utf8', timeout: 5000, windowsHide: true }
-                    ).trim();
+                    // Try our actual parent first (precise isolation)
+                    let pid = parseInt(process.env.VSCODE_PID || process.ppid, 10);
+                    
+                    if (!pid || isNaN(pid)) {
+                        // Backup check if parent strategy fails
+                        const pidOutput = execSync(
+                            'powershell -NoProfile -Command "(Get-Process -Name *Antigravity* -ErrorAction SilentlyContinue | Select-Object -First 1).Id"',
+                            { encoding: 'utf8', timeout: 5000, windowsHide: true }
+                        ).trim();
+                        pid = parseInt(pidOutput, 10);
+                    }
 
-                    const pid = parseInt(pidOutput, 10);
                     if (pid > 0) {
                         this.log(`Found Antigravity PID: ${pid}`);
                         // Get listening ports for this PID

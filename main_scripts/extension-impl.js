@@ -192,10 +192,10 @@ async function activate(context) {
 
     try {
         // 1. Initialize State
-        isEnabled = context.globalState.get(GLOBAL_STATE_KEY, false);
+        isEnabled = context.workspaceState.get(GLOBAL_STATE_KEY, false);
 
         // Load frequency
-        pollFrequency = context.globalState.get(FREQ_STATE_KEY, 1000);
+        pollFrequency = context.workspaceState.get(FREQ_STATE_KEY, 1000);
 
         // Load banned commands list (default: common dangerous patterns)
         const defaultBannedCommands = [
@@ -211,7 +211,7 @@ async function activate(context) {
             '> /dev/sda',
             'chmod -R 777 /'
         ];
-        bannedCommands = context.globalState.get(BANNED_COMMANDS_KEY, defaultBannedCommands);
+        bannedCommands = context.workspaceState.get(BANNED_COMMANDS_KEY, defaultBannedCommands);
 
         currentIDE = detectIDE();
 
@@ -261,8 +261,8 @@ async function activate(context) {
 
             const cdpConfig = {
                 ide: currentIDE,
-                bannedCommands: context.globalState.get(BANNED_COMMANDS_KEY, []),
-                pollInterval: context.globalState.get(FREQ_STATE_KEY, 1000),
+                bannedCommands: context.workspaceState.get(BANNED_COMMANDS_KEY, []),
+                pollInterval: context.workspaceState.get(FREQ_STATE_KEY, 1000),
                 workspaceName: detectedWorkspace,
                 port: configuredCdpPort
             };
@@ -448,10 +448,10 @@ async function activate(context) {
             }),
             vscode.commands.registerCommand('antigravity-mpa.resetSettings', async () => {
                 // Reset all extension settings
-                await context.globalState.update(GLOBAL_STATE_KEY, false);
-                await context.globalState.update(FREQ_STATE_KEY, 1000);
-                await context.globalState.update(BANNED_COMMANDS_KEY, undefined);
-                await context.globalState.update(ROI_STATS_KEY, undefined);
+                await context.workspaceState.update(GLOBAL_STATE_KEY, false);
+                await context.workspaceState.update(FREQ_STATE_KEY, 1000);
+                await context.workspaceState.update(BANNED_COMMANDS_KEY, undefined);
+                await context.workspaceState.update(ROI_STATS_KEY, undefined);
                 isEnabled = false;
                 bannedCommands = [];
                 vscode.window.showInformationMessage('Antigravity Multi Purpose: All settings reset to defaults.');
@@ -606,7 +606,7 @@ async function handleToggle(context) {
         log(`  New isEnabled: ${isEnabled}`);
 
         // Update state and UI IMMEDIATELY (non-blocking)
-        await context.globalState.update(GLOBAL_STATE_KEY, isEnabled);
+        await context.workspaceState.update(GLOBAL_STATE_KEY, isEnabled);
         log(`  GlobalState updated`);
 
         log('  Calling updateStatusBar...');
@@ -653,7 +653,7 @@ async function handleRelaunch() {
 
 async function handleFrequencyUpdate(context, freq) {
     pollFrequency = freq;
-    await context.globalState.update(FREQ_STATE_KEY, freq);
+    await context.workspaceState.update(FREQ_STATE_KEY, freq);
     log(`Poll frequency updated to: ${freq}ms`);
     if (isEnabled) {
         await syncSessions();
@@ -662,7 +662,7 @@ async function handleFrequencyUpdate(context, freq) {
 
 async function handleBannedCommandsUpdate(context, commands) {
     bannedCommands = Array.isArray(commands) ? commands : [];
-    await context.globalState.update(BANNED_COMMANDS_KEY, bannedCommands);
+    await context.workspaceState.update(BANNED_COMMANDS_KEY, bannedCommands);
     log(`Banned commands updated: ${bannedCommands.length} patterns`);
     if (bannedCommands.length > 0) {
         log(`Banned patterns: ${bannedCommands.slice(0, 5).join(', ')}${bannedCommands.length > 5 ? '...' : ''}`);
@@ -716,32 +716,10 @@ async function startPolling() {
     pollTimer = setInterval(async () => {
         if (!isEnabled) return;
 
-        // Check for instance locking - only the first extension instance should control CDP
-        const lockKey = `${currentIDE.toLowerCase()}-instance-lock`;
-        const activeInstance = globalContext.globalState.get(lockKey);
-        const myId = globalContext.extension.id;
-
-        if (activeInstance && activeInstance !== myId) {
-            const lastPing = globalContext.globalState.get(`${lockKey}-ping`);
-            if (lastPing && (Date.now() - lastPing) < 15000) {
-                if (!isLockedOut) {
-                    log(`CDP Control: Locked by another instance (${activeInstance}). Standby mode.`);
-                    isLockedOut = true;
-                    updateStatusBar();
-                }
-                return;
-            }
-        }
-
         // We are the leader or lock is dead
-        globalContext.globalState.update(lockKey, myId);
-        globalContext.globalState.update(`${lockKey}-ping`, Date.now());
+        
 
-        if (isLockedOut) {
-            log('CDP Control: Lock acquired. Resuming control.');
-            isLockedOut = false;
-            updateStatusBar();
-        }
+        
 
         await syncSessions();
     }, 5000);
@@ -780,7 +758,7 @@ async function loadROIStats(context) {
         sessionsThisWeek: 0
     };
 
-    let stats = context.globalState.get(ROI_STATS_KEY, defaultStats);
+    let stats = context.workspaceState.get(ROI_STATS_KEY, defaultStats);
 
     // Check if we need to reset for a new week
     const currentWeekStart = getWeekStart();
@@ -794,7 +772,7 @@ async function loadROIStats(context) {
 
         // Reset for new week
         stats = { ...defaultStats, weekStart: currentWeekStart };
-        await context.globalState.update(ROI_STATS_KEY, stats);
+        await context.workspaceState.update(ROI_STATS_KEY, stats);
     }
 
     // Calculate formatted time for UI
@@ -944,7 +922,7 @@ async function collectAndSaveStats(context) {
             currentStats.clicksThisWeek += browserStats.clicks;
             currentStats.blockedThisWeek += browserStats.blocked;
 
-            await context.globalState.update(ROI_STATS_KEY, currentStats);
+            await context.workspaceState.update(ROI_STATS_KEY, currentStats);
             log(`ROI Stats collected: +${browserStats.clicks} clicks, +${browserStats.blocked} blocked (Total: ${currentStats.clicksThisWeek} clicks, ${currentStats.blockedThisWeek} blocked)`);
 
             // Broadcast update to real-time dashboard
@@ -961,7 +939,7 @@ async function collectAndSaveStats(context) {
 async function incrementSessionCount(context) {
     const stats = await loadROIStats(context);
     stats.sessionsThisWeek++;
-    await context.globalState.update(ROI_STATS_KEY, stats);
+    await context.workspaceState.update(ROI_STATS_KEY, stats);
     log(`ROI Stats: Session count incremented to ${stats.sessionsThisWeek}`);
 }
 

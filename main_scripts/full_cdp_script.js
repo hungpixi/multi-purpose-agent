@@ -1,4 +1,4 @@
-﻿/**
+/**
  * FULL CDP CORE BUNDLE
  * Monolithic script for browser-side injection.
  * Combines utils, analytics, antigravity-mpa, and lifecycle management.
@@ -773,12 +773,29 @@
             log(`Starting poll loop...`);
             (async function pollLoop() {
                 while (state.isRunning && state.sessionID === sid) {
-                    // Step 1: Scroll chat to bottom so buttons at the end become visible/rendered
-                    autoScrollChatToBottom();
-                    // Step 2: Auto-expand any collapsed step-input sections
-                    autoExpandStepInputSections();
-                    // Step 3: Click accept/run/submit buttons
-                    await performClick(['button', '[class*="button"]', '[class*="anysphere"]', '[role="button"]']);
+                    // Check if user is actively typing in an input field in this context
+                    const activeEl = document.activeElement;
+                    let isTyping = false;
+                    
+                    if (activeEl && activeEl !== document.body) {
+                        const tagName = activeEl.tagName.toUpperCase();
+                        if (tagName === 'TEXTAREA' || 
+                            (tagName === 'INPUT' && !['button', 'submit', 'radio', 'checkbox'].includes(activeEl.type)) || 
+                            activeEl.isContentEditable || 
+                            activeEl.classList?.contains('ProseMirror')) {
+                            isTyping = true;
+                        }
+                    }
+
+                    if (!isTyping) {
+                        // Step 1: Scroll chat to bottom so buttons at the end become visible/rendered
+                        autoScrollChatToBottom();
+                        // Step 2: Auto-expand any collapsed step-input sections
+                        autoExpandStepInputSections();
+                        // Step 3: Click accept/run/submit buttons
+                        await performClick(['button', '[class*="button"]', '[class*="anysphere"]', '[role="button"]']);
+                    }
+                    
                     // Fast polling: 300ms for snappy response (was 1000ms)
                     await new Promise(r => setTimeout(r, config.pollInterval || 300));
                 }
