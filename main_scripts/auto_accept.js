@@ -25,9 +25,13 @@ export function autoAccept(buttons) {
 function isAcceptButton(el) {
     // define the types that are supported
     const ACCEPT_PATTERNS = [
+        // Accept/Apply
         { pattern: 'accept', exact: false },
         { pattern: 'accept all', exact: false },
         { pattern: 'acceptalt', exact: false },
+        { pattern: 'apply', exact: true },
+        { pattern: 'apply all', exact: false },
+        // Run variants
         { pattern: 'run command', exact: false },
         { pattern: 'run', exact: false },
         { pattern: 'run code', exact: false },
@@ -36,13 +40,35 @@ function isAcceptButton(el) {
         { pattern: 'run selection', exact: false },
         { pattern: 'run and debug', exact: false },
         { pattern: 'run test', exact: false },
-        { pattern: 'apply', exact: true },
+        // Execute/Retry
         { pattern: 'execute', exact: true },
         { pattern: 'resume', exact: true },
         { pattern: 'retry', exact: true },
         { pattern: 'try again', exact: false },
+        // Confirm/Proceed
         { pattern: 'confirm', exact: false },
-        { pattern: 'Allow Once', exact: true }
+        { pattern: 'proceed', exact: false },
+        { pattern: 'continue', exact: true },
+        // Allow (permission dialogs - khi AI truy cập file ngoài workspace)
+        { pattern: 'allow once', exact: true },
+        { pattern: 'allow always', exact: true },
+        { pattern: 'allow', exact: true },
+        { pattern: 'allow for this conversation', exact: false },
+        { pattern: 'allow in this workspace', exact: false },
+        { pattern: 'allow this workspace', exact: false },
+        { pattern: 'allow access', exact: false },
+        { pattern: 'grant access', exact: false },
+        { pattern: 'grant', exact: true },
+        // Yes/OK dialogs
+        { pattern: 'yes', exact: true },
+        { pattern: 'yes, proceed', exact: false },
+        { pattern: 'ok', exact: true },
+        { pattern: 'okay', exact: true },
+        // Save/Open
+        { pattern: 'save', exact: true },
+        { pattern: 'open', exact: true },
+        // Submit
+        { pattern: 'submit', exact: true },
     ];
 
     // define the types that are not targetted
@@ -94,7 +120,7 @@ function isElementClickable(el) {
 
 
 export function click(targetSelectors, panelSelector) {
-    focusOnPanel(panelSelector) // focus on the panel
+    // skip focusOnPanel to avoid stealing focus from chat input
     const targets = Array.isArray(targetSelectors) ? targetSelectors : [targetSelectors]
     const docs = utils.getDocuments();
     const discoveredElements = [];
