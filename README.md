@@ -1,126 +1,204 @@
-﻿# 🤖 Antigravity Multi Purpose Agent v2.0
+<p align="center">
+  <img src="media/icon.png" width="128" alt="Antigravity Auto Accept" />
+</p>
 
-> **Engineered by** [hungpixi](https://github.com/hungpixi) | [Comarai Agency](https://comarai.com)
+<h1 align="center">⚡ Antigravity Auto Accept</h1>
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/hungpixi/multi-purpose-agent)
-[![License](https://img.shields.io/badge/license-ISC-green.svg)](LICENSE.md)
-[![Made with ❤️](https://img.shields.io/badge/Made%20with-❤️%20by%20hungpixi-red)](https://comarai.com)
+<p align="center">
+  <strong>Zero-click automation for Antigravity IDE — Accept file edits, terminal commands & recovery prompts automatically.</strong>
+</p>
 
-## 🎯 Tại Sao Fork Này Tồn Tại?
+<p align="center">
+  <a href="LICENSE.md"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
+  <img src="https://img.shields.io/badge/version-2.0.13-green.svg" alt="Version" />
+  <img src="https://img.shields.io/badge/CDP-port%209004-orange.svg" alt="CDP Port" />
+  <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" alt="Platform" />
+</p>
 
-Trên thực tế khi sử dụng **Antigravity IDE** hoặc Cursor/Windsurf, các luồng xử lý Agent Automation hay gặp vấn đề về tốc độ click button và CDP discovery. Phiên bản này (PROMAX) ra đời khắc phục triệt để các pain-point:
-
-| Vấn đề cũ | Bản cơ bản | ✅ Hungpixi Edition |
-|-------------|---------|---------------------|
-| CMD popup hiện mỗi lần restart | `.bat` file flash CMD window | Pure PowerShell, `windowsHide: true` — zero popup |
-| Accept chậm 1-2 giây | Poll interval 2000ms | Poll 300ms — gần như instant |
-| "Step Input Required" phải bấm thủ công | Không xử lý | Auto-expand collapsed sections |
-| Antigravity.exe path cứng | Chỉ check 1 location | Multi-path discovery (4+ locations) |
-| Chỉ detect Accept buttons | 6 patterns | 8+ patterns (`submit`, `send`, `allow`) |
-
-## 💡 Quá Trình Tư Duy
-
-### 1. Phân Tích Root Cause
-Mổ xẻ luồng chạy cũ của các Extension Auto Clicker:
-- Giao tiếp CDP thường tạo `.bat` file → `spawn powershell` → run batch → CMD flash → IDE không tìm thấy listener.
-- `full_cdp_script.js`: `pollInterval || 1000` + `pollFrequency = 2000` — quá chậm
-- Không có logic auto-expand cho UI collapsed states
-
-### 2. Giải Pháp Khác Biệt
-
-**Relaunch**: Bỏ hoàn toàn batch file trung gian. Dùng PowerShell native với `windowsHide: true` + `detached: true`. Search multiple exe paths.
-
-**Polling**: Giảm xuống 300ms browser-side, 500ms extension-side. Đủ nhanh để user không cảm nhận delay, đủ chậm để không gây CPU spike.
-
-**Step Input**: Thêm `autoExpandStepInputSections()` — scan DOM cho `aria-expanded="false"`, `<details>`, collapsed classes → auto-click expand → accept buttons hiện ra → click ngay.
-
-### 3. Hướng Đi Tương Lai
-
-- [ ] **MutationObserver** thay polling — zero CPU khi idle, instant response khi button xuất hiện
-- [ ] **Configurable patterns** — user tự define accept/reject button patterns
-- [ ] **Smart step input** — auto-fill textarea rồi submit (cho workflow automation)
-- [ ] **Multi-IDE support** — test trên Cursor, Windsurf, Trae
-- [ ] **Branding**: Custom status bar icon + panel UI cho Comarai
-
-## 🚀 Cài Đặt
-
-### Từ VSIX file (推薦)
-```bash
-# Antigravity IDE
-antigravity --install-extension hungpixi-multi-purpose-agent-2.0.0.vsix --force
-
-# VS Code
-code --install-extension hungpixi-multi-purpose-agent-2.0.0.vsix --force
-```
-
-### Build từ source
-```bash
-git clone https://github.com/hungpixi/multi-purpose-agent.git
-cd multi-purpose-agent
-npm install
-npm run compile
-npx vsce package
-```
-
-## ⚙️ Cấu Hình
-
-| Setting | Default | Mô tả |
-|---------|---------|--------|
-| `antigravity-mpa.cdpPort` | `0` (auto) | Chrome DevTools Protocol port. 0 = auto-discover |
-| `antigravity-mpa.schedule.enabled` | `false` | Bật scheduled prompts |
-| `antigravity-mpa.schedule.silenceTimeout` | `30` | Giây chờ trước khi coi task hoàn thành |
-| `antigravity-mpa.antigravityQuota.enabled` | `true` | Hiển thị Antigravity quota trên status bar |
-
-## 📁 Cấu Trúc Project
-
-```
-├── main_scripts/
-│   ├── extension-impl.js    # Core extension logic
-│   ├── relauncher.js         # IDE restart with CDP flag (FIXED)
-│   ├── cdp-handler.js        # Chrome DevTools Protocol handler
-│   ├── cdp-discovery.js      # Auto-discover CDP ports
-│   ├── full_cdp_script.js    # Browser-side injection script (OPTIMIZED)
-│   ├── auto_accept.js        # Button click logic
-│   ├── debug-handler.js      # Debug mode API
-│   ├── settings-panel.js     # Settings webview
-│   └── utils.js              # Utilities
-├── extension.js              # Entry point
-├── package.json              # Extension manifest
-├── build.bat                 # Build script
-└── stop_all_processes.bat    # Cleanup script
-```
-
-## 🔧 Tech Stack
-
-- **Runtime**: Node.js (VS Code Extension API)
-- **Browser Communication**: Chrome DevTools Protocol (CDP)
-- **Bundler**: esbuild
-- **WebSocket**: ws@8.x
-- **Packaging**: @vscode/vsce
-
-## 📜 Credits
-
-- **Author**: [hungpixi](https://github.com/hungpixi) — [Comarai Agency](https://comarai.com)
-
-## 📄 License
-
-ISC License — xem [LICENSE.md](LICENSE.md)
+<p align="center">
+  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-features">Features</a> •
+  <a href="#-architecture">Architecture</a> •
+  <a href="#-configuration">Configuration</a> •
+  <a href="#-credits">Credits</a>
+</p>
 
 ---
 
-## 🤝 Bạn muốn Extension tương tự cho IDE của bạn?
+## 🤔 The Problem
 
-| Bạn cần | Chúng tôi đã làm ✅ |
-|---------|---------------------|
-| antigravity-mpa cho Cursor/Windsurf | Fork + customize extension |
-| Workflow automation | Scheduled prompts + queue |
-| Custom AI agent integration | CDP handler + debug API |
-| IDE branding | Custom status bar + panel |
+Antigravity's multi-agent workflow is **incredibly powerful**, but it stops **every single time** an agent needs approval — file edits, terminal commands, retry prompts.
+
+> **That's dozens of interruptions per hour.** You're essentially babysitting an AI.
+
+## 💡 The Solution
+
+**Antigravity Auto Accept** eliminates the wait. It runs silently in the background, auto-clicking approval buttons so you can focus on what matters — building.
+
+| What it handles | How |
+|---|---|
+| ✅ File edits | Auto-accepted |
+| ✅ Terminal commands | Auto-executed |
+| ✅ Retry prompts | Auto-confirmed |
+| ✅ Stuck agents | Auto-recovered |
+| 🛡️ Dangerous commands | **Blocked** (`rm -rf`, `format c:`, etc.) |
+
+---
+
+## 🚀 Quick Start
+
+```bash
+# 1. Install the VSIX
+# Download from Releases → Install via Extensions sidebar → "Install from VSIX..."
+
+# 2. Relaunch Antigravity (one-time, adds --remote-debugging-port=9004)
+# The extension will prompt you automatically
+
+# 3. Done! Check status bar for "Antigravity: ON" ✅
+```
+
+> **That's it.** No config files, no API keys, no setup wizard. Just install and go.
+
+---
+
+## ✨ Features
+
+### 🎯 Smart Auto-Accept
+- Detects and clicks `Accept`, `Run`, `Retry`, `Apply`, `Confirm`, `Allow` buttons
+- **Typing protection** — pauses auto-clicking when you're actively typing (4-second buffer)
+- **Visibility checks** — only clicks visible, enabled, non-hidden buttons
+- Polls every 1 second (configurable)
+
+### 📋 Prompt Queue Engine
+Automate entire workflows with sequenced prompts:
+- **Queue Mode** — Run tasks sequentially with silence detection
+- **Interval Mode** — Send prompts on a timer
+- **Check Prompts** — Verify task completion before advancing
+- **CDP injection** — Sends messages directly into Antigravity's chat panel
+
+### 📊 Antigravity Quota Monitor
+Real-time credit tracking in the status bar:
+- Remaining credits & usage percentage
+- Time until quota reset
+- Auto-pause/resume when quota is exhausted
+
+### 🛡️ Safety & Dangerous Command Blocking
+Built-in protection against destructive commands:
+```
+rm -rf /    rm -rf ~    format c:    del /f /s /q
+dd if=      mkfs.       :(){:|:&};:  > /dev/sda
+```
+Fully customizable blocklist with regex pattern support.
+
+### 📈 Impact Dashboard
+Track your productivity gains:
+- Clicks saved per session/week
+- Estimated time recovered
+- Terminal commands vs file edits breakdown
+- Away-from-desk action tracking
+
+### 🔧 Remote Debug Server
+HTTP API on port `54321` for programmatic control:
+- Full state inspection & configuration
+- Queue control (start/pause/resume/skip/stop)
+- Browser-side JavaScript evaluation via CDP
+- Settings Panel UI automation
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+graph TD
+    A[Extension Host<br/>Node.js] -->|WebSocket| B[CDP Handler<br/>Port 9004]
+    B -->|Inject| C[full_cdp_script.js<br/>Browser Context]
+    C -->|Poll 1s| D{Scan DOM}
+    D -->|button / .button / .anysphere| E[isAcceptButton?]
+    E -->|✅ Match| F[dispatchEvent click]
+    E -->|❌ Reject| G[Skip]
+    F --> H[waitForDisappear 500ms]
+    H -->|Verified| I[Analytics Track]
+    
+    A -->|HTTP| J[Debug Server<br/>Port 54321]
+    A -->|Config| K[Scheduler / Queue Engine]
+    K -->|CDP| B
+    
+    style C fill:#f9f,stroke:#333
+    style E fill:#ff9,stroke:#333
+    style F fill:#9f9,stroke:#333
+```
+
+### Key Design Decisions
+- **CDP over VS Code API** — Antigravity's chat is a webview, not accessible via standard extension APIs
+- **Narrow DOM selectors** — Only scans `button`, `[class*="button"]`, `[class*="anysphere"]` to avoid false positives
+- **Session singleton** — Poll loop uses incrementing `sessionID` to prevent duplicate loops
+- **Keystroke guard** — Tracks `keydown` events globally to avoid interrupting user input
+
+---
+
+## ⚙️ Configuration
+
+| Setting | Default | Description |
+|---|---|---|
+| `auto-accept.cdpPort` | `9004` | CDP debugging port |
+| `auto-accept.schedule.enabled` | `false` | Enable prompt scheduler |
+| `auto-accept.schedule.mode` | `queue` | `queue` or `interval` |
+| `auto-accept.schedule.silenceTimeout` | `30` | Seconds of silence before advancing queue |
+| `auto-accept.debugMode.enabled` | `false` | Enable HTTP debug server on port 54321 |
+| `auto-accept.antigravityQuota.enabled` | `true` | Monitor Antigravity quota |
+
+---
+
+## 📁 Project Structure
+
+```
+├── extension.js              # Entry point
+├── main_scripts/
+│   ├── extension-impl.js     # Core extension lifecycle
+│   ├── full_cdp_script.js    # Browser-injected auto-accept logic
+│   ├── cdp-handler.js        # WebSocket CDP connection manager
+│   ├── debug-handler.js      # HTTP debug server (port 54321)
+│   ├── settings-panel.js     # WebView settings UI
+│   └── relauncher.js         # One-click relaunch with CDP flag
+├── media/
+│   └── icon.png              # Extension icon
+├── docs/
+│   ├── WORKFLOW.md           # Development workflows
+│   └── DEBUG_TESTING.md      # Debug & testing guide
+└── tests/
+    └── scheduler.test.js     # Queue engine tests
+```
+
+---
+
+## 🔧 Requirements
+
+- **Antigravity IDE** (or any Electron-based code editor with CDP support)
+- Launched with `--remote-debugging-port=9004`
+- The extension handles relaunch automatically on first install
+
+---
+
+## 🙏 Credits & Thanks
+
+Built upon excellent work from the community:
+
+- [Auto Accept Agent](https://github.com/Munkhin/auto-accept-agent) by Munkhin — Original auto-accept concept
+- [Antigravity Quota Watcher](https://github.com/Henrik-3/AntigravityQuota) by Henrik-3 — Quota monitoring
+- [Rodhayl Multi Purpose Agent](https://github.com/rodhayl/antigravity-multi-purpose-agent) by Rodhayl — Stable CDP architecture foundation (v1.0.1)
+
+---
+
+## 📄 License
+
+[MIT](LICENSE.md) — Use it, fork it, ship it. No strings attached.
+
+---
 
 <p align="center">
-  <a href="https://comarai.com"><img src="https://img.shields.io/badge/🌐_Yêu_cầu_Demo-comarai.com-blue?style=for-the-badge" alt="Demo"></a>
-  <a href="https://zalo.me/0834422439"><img src="https://img.shields.io/badge/💬_Zalo-0834422439-green?style=for-the-badge" alt="Zalo"></a>
-  <a href="mailto:hungphamphunguyen@gmail.com"><img src="https://img.shields.io/badge/📧_Email-Liên_hệ-red?style=for-the-badge" alt="Email"></a>
+  <strong>⭐ Star this repo if it saves you time! Every star helps others discover this tool.</strong>
 </p>
 
-> 💡 *"Code tốt không phải biết viết code — mà là biết đọc code người khác, tìm ra pain-point, và fix nó tốt hơn."* — hungpixi
+<p align="center">
+  Made with ⚡ by <a href="https://github.com/hungpixi">hungpixi</a> / <a href="https://comarai.com">comarai.com</a>
+</p>

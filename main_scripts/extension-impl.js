@@ -1,4 +1,4 @@
-﻿const vscode = require('vscode');
+const vscode = require('vscode');
 const path = require('path');
 const fs = require('fs');
 const { DebugHandler } = require('./debug-handler');
@@ -33,17 +33,17 @@ function getAntigravityClient() {
 
 // states
 
-const GLOBAL_STATE_KEY = 'antigravity-mpa-enabled-global';
-const FREQ_STATE_KEY = 'antigravity-mpa-frequency';
-const BANNED_COMMANDS_KEY = 'antigravity-mpa-banned-commands';
-const ROI_STATS_KEY = 'antigravity-mpa-roi-stats';
+const GLOBAL_STATE_KEY = 'auto-accept-enabled-global';
+const FREQ_STATE_KEY = 'auto-accept-frequency';
+const BANNED_COMMANDS_KEY = 'auto-accept-banned-commands';
+const ROI_STATS_KEY = 'auto-accept-roi-stats';
 const CDP_SETUP_COMPLETED_KEY = 'cdp-setup-completed';
 const EXTENSION_VERSION_KEY = 'extension-version'; // Track version to detect reinstall
-const SECONDS_PER_CLICK = 5; // Conservative estimate: 5 seconds saved per antigravity-mpa
+const SECONDS_PER_CLICK = 5; // Conservative estimate: 5 seconds saved per auto-accept
 
 let isEnabled = false;
 let isLockedOut = false; // Local tracking
-let pollFrequency = 500; // Fast default (was 2000)
+let pollFrequency = 2000; // Default for Free
 let bannedCommands = []; // List of command patterns to block
 
 let pollTimer;
@@ -93,85 +93,768 @@ function log(message) {
     }
 }
 
-const { Scheduler } = require('./scheduler');
+async function resetExtensionSettings(context) {
+    await context.globalState.update(GLOBAL_STATE_KEY, false);
+    await context.globalState.update(FREQ_STATE_KEY, 1000);
+    await context.globalState.update(BANNED_COMMANDS_KEY, undefined);
+    await context.globalState.update(ROI_STATS_KEY, undefined);
+
+    const scheduleConfig = vscode.workspace.getConfiguration('auto-accept.schedule');
+    await scheduleConfig.update('enabled', false, vscode.ConfigurationTarget.Global);
+    await scheduleConfig.update('mode', 'interval', vscode.ConfigurationTarget.Global);
+    await scheduleConfig.update('value', '30', vscode.ConfigurationTarget.Global);
+    await scheduleConfig.update('prompt', 'Status report please', vscode.ConfigurationTarget.Global);
+    await scheduleConfig.update('prompts', [], vscode.ConfigurationTarget.Global);
+    await scheduleConfig.update('queueMode', 'consume', vscode.ConfigurationTarget.Global);
+    await scheduleConfig.update('silenceTimeout', 30, vscode.ConfigurationTarget.Global);
+    await scheduleConfig.update('checkPrompt.enabled', false, vscode.ConfigurationTarget.Global);
+    await scheduleConfig.update('checkPrompt.text', 'Make sure that the previous task was implemented fully as per requirements, implement all gaps, fix all bugs and test everything. Make sure that you reused existing code where possible instead of duplicating code. ultrathink internally avoiding verbosity.', vscode.ConfigurationTarget.Global);
+
+    await vscode.workspace.getConfiguration('auto-accept.antigravityQuota').update('enabled', true, vscode.ConfigurationTarget.Global);
+    await vscode.workspace.getConfiguration('auto-accept.antigravityQuota').update('pollInterval', 60, vscode.ConfigurationTarget.Global);
+    await vscode.workspace.getConfiguration('auto-accept.antigravityQuota.resume').update('enabled', true, vscode.ConfigurationTarget.Global);
+    await vscode.workspace.getConfiguration('auto-accept.autoContinue').update('enabled', false, vscode.ConfigurationTarget.Global);
+    await vscode.workspace.getConfiguration('auto-accept.debugMode').update('enabled', false, vscode.ConfigurationTarget.Global);
+    await vscode.workspace.getConfiguration('auto-accept').update('cdpPort', 0, vscode.ConfigurationTarget.Global);
+}
+
+// --- Scheduler Class ---
+class Scheduler {
+    constructor(context, cdpHandler, logFn, options = {}) {
+        this.context = context;
+        this.cdpHandler = cdpHandler;
+        this.log = logFn;
+        this.timer = null;
+        this.silenceTimer = null;
+        this.lastRunTime = Date.now();
+        this.lastClickTime = 0;
+        this.lastClickCount = 0;
+        this.lastActivityTime = 0;
+        this.enabled = false;
+        this.isQuotaExhausted = false;
+        this.config = {};
+        this.promptQueue = Promise.resolve();
+
+        // Queue mode state
+        this.runtimeQueue = [];
+        this.queueIndex = 0;
+        this.isRunningQueue = false;
+        this.isStopped = false; // Flag to cancel pending prompts
+        this.queueRunId = 0;
+        this.taskStartTime = 0;
+        this.hasSentCurrentItem = false;
+        this.activationTime = Date.now(); // Track when scheduler was created for activation guard
+        this.ensureCdpReady = typeof options.ensureCdpReady === 'function' ? options.ensureCdpReady : null;
+        this.lastCdpSyncTime = 0;
+
+        // Multi-queue ready architecture (single conversation for now)
+        this.targetConversation = '';  // '' = current active tab
+        this.promptHistory = [];       // HistoryEntry[]
+        this.conversationStatus = 'idle'; // 'idle'|'running'|'waiting'
+        this.isPaused = false;         // User-initiated pause
+    }
+
+    async ensureCdpReadyNow(reason, force = false) {
+        if (!this.ensureCdpReady) return;
+        const now = Date.now();
+        if (!force && this.lastCdpSyncTime && (now - this.lastCdpSyncTime) < 2000) return;
+        this.lastCdpSyncTime = now;
+        try {
+            this.log(`Scheduler: Syncing CDP (${reason})...`);
+            await this.ensureCdpReady();
+        } catch (e) {
+            this.log(`Scheduler: CDP sync failed: ${e?.message || String(e)}`);
+        }
+    }
+
+    start() {
+        this.loadConfig();
+        if (this.timer) clearInterval(this.timer);
+        this.timer = setInterval(() => this.check(), 60000);
+
+        // Silence detection timer (runs more frequently)
+        if (this.silenceTimer) clearInterval(this.silenceTimer);
+        this.silenceTimer = setInterval(() => this.checkSilence(), 5000);
+
+        // Reset activation time when scheduler starts (for accurate grace period)
+        this.activationTime = Date.now();
+        this.log('Scheduler started.');
+    }
+
+    stop() {
+        if (this.timer) {
+            clearInterval(this.timer);
+            this.timer = null;
+        }
+        if (this.silenceTimer) {
+            clearInterval(this.silenceTimer);
+            this.silenceTimer = null;
+        }
+        this.isRunningQueue = false;
+    }
+
+    loadConfig() {
+        const cfg = vscode.workspace.getConfiguration('auto-accept.schedule');
+        const newEnabled = cfg.get('enabled', false);
+
+        // Reset timer on rising edge (Disabled -> Enabled)
+        if (!this.enabled && newEnabled) {
+            this.lastRunTime = Date.now();
+            this.log('Scheduler: Enabled via config update - Timer reset');
+        }
+        this.enabled = newEnabled;
+        this.config = {
+            mode: cfg.get('mode', 'interval'),
+            value: cfg.get('value', '30'),
+            prompt: cfg.get('prompt', 'Status report please'),
+            prompts: cfg.get('prompts', []),
+            queueMode: cfg.get('queueMode', 'consume'),
+            silenceTimeout: cfg.get('silenceTimeout', 30) * 1000, // Convert to ms
+            checkPromptEnabled: cfg.get('checkPrompt.enabled', false),
+            checkPromptText: cfg.get('checkPrompt.text', 'Make sure that the previous task was implemented fully as per requirements, implement all gaps, fix all bugs and test everything. Make sure that you reused existing code where possible instead of duplicating code. ultrathink internally avoiding verbosity.')
+        };
+        this.log(`Scheduler Config: mode=${this.config.mode}, enabled=${this.enabled}, prompts=${this.config.prompts.length}`);
+    }
+
+    buildRuntimeQueue() {
+        const prompts = [...this.config.prompts];
+        if (prompts.length === 0) return [];
+
+        const queue = [];
+        for (let i = 0; i < prompts.length; i++) {
+            queue.push({ type: 'task', text: prompts[i], index: i });
+            if (this.config.checkPromptEnabled) {
+                queue.push({ type: 'check', text: this.config.checkPromptText, afterIndex: i });
+            }
+        }
+        return queue;
+    }
+
+    async check() {
+        this.loadConfig();
+        if (!this.enabled || !this.cdpHandler) return;
+
+        const now = new Date();
+        const mode = this.config.mode;
+        const val = this.config.value;
+
+        if (mode === 'interval') {
+            const minutes = parseInt(val) || 30;
+            const ms = minutes * 60 * 1000;
+            if (Date.now() - this.lastRunTime > ms) {
+                this.log(`Scheduler: Interval triggered (${minutes}m)`);
+                await this.trigger();
+            }
+        } else if (mode === 'daily') {
+            const [targetH, targetM] = val.split(':').map(Number);
+            if (now.getHours() === targetH && now.getMinutes() === targetM) {
+                if (Date.now() - this.lastRunTime > 60000) {
+                    this.log(`Scheduler: Daily triggered (${val})`);
+                    await this.trigger();
+                }
+            }
+        }
+        // Queue mode is handled via startQueue() and silence detection
+    }
+
+    async checkSilence() {
+        // Queue advancement only requires: running queue + CDP connection + queue mode
+        // Note: this.enabled is for scheduled runs; manual "Run Queue" doesn't need it
+        if (!this.cdpHandler || !this.isRunningQueue) return;
+        if (this.config.mode !== 'queue') return;
+        if (this.isPaused) return; // User paused - wait for resume
+        if (this.isQuotaExhausted) return; // Don't advance if quota exhausted
+
+        // Get current click count from CDP
+        try {
+            const stats = await this.cdpHandler.getStats();
+            const currentClicks = stats?.clicks || 0;
+
+            // If clicks happened, update last click time
+            if (currentClicks > this.lastClickCount) {
+                this.lastClickTime = Date.now();
+                this.lastActivityTime = this.lastClickTime;
+                this.lastClickCount = currentClicks;
+                this.log(`Scheduler: Activity detected (${currentClicks} clicks)`);
+            }
+
+            // Check if silence timeout reached (only after we've successfully sent the current queue item)
+            const silenceDuration = Date.now() - (this.lastActivityTime || this.lastClickTime || Date.now());
+            const taskDuration = Date.now() - this.taskStartTime;
+
+            // Only advance if:
+            // 1. We've been running this task for at least 10 seconds
+            // 2. We successfully sent the current queue item
+            // 3. Silence duration exceeds timeout
+            if (taskDuration > 10000 && this.hasSentCurrentItem && silenceDuration > this.config.silenceTimeout) {
+                this.log(`Scheduler: Silence detected (${Math.round(silenceDuration / 1000)}s), advancing queue`);
+                await this.advanceQueue();
+            }
+        } catch (e) {
+            this.log(`Scheduler: Error checking silence: ${e.message}`);
+        }
+    }
+
+    async startQueue(options) {
+        // CRITICAL: Require explicit source for all startQueue calls
+        const validSources = ['manual', 'debug-server', 'resume', 'test'];
+        const source = options?.source;
+
+        // DEBUG: Trace caller if no valid source
+        if (!source || !validSources.includes(source)) {
+            this.log(`Scheduler: BLOCKED startQueue - invalid source: "${source}". Valid: ${validSources.join(', ')}`);
+            this.log('Scheduler: Stack trace: ' + new Error().stack);
+            return; // Block phantom callers
+        }
+
+        this.log(`Scheduler: startQueue called with source: ${source}`);
+
+        // Dampener: Prevent rapid restarts/loops (2 second cooldown)
+        if (this.lastStartQueueTime && Date.now() - this.lastStartQueueTime < 2000) {
+            this.log('Scheduler: Ignoring rapid startQueue call (< 2s)');
+            return;
+        }
+        this.lastStartQueueTime = Date.now();
+
+        // ACTIVATION GUARD: Block non-manual starts during activation grace period.
+        // Prevents config/debug automation from triggering queue start on reload, while still allowing user clicks.
+        if (this.activationTime && Date.now() - this.activationTime < 5000 && source !== 'manual' && source !== 'test') {
+            this.log(`Scheduler: BLOCKED startQueue during activation grace period (${Math.round((Date.now() - this.activationTime) / 1000)}s < 5s)`);
+            return;
+        }
+
+        // Load config first to get current state
+        this.loadConfig();
+
+        // Prevent auto-starting queue when scheduler is enabled but user hasn't explicitly started it
+        if (this.config.mode === 'queue' && this.isRunningQueue) {
+            this.log('Scheduler: Queue is already running, ignoring duplicate startQueue call');
+            return;
+        }
+
+        this.log(`Scheduler: Queue start proceeding (source: ${source})`);
+
+        if (this.config.mode !== 'queue') {
+            this.log('Scheduler: Not in queue mode, ignoring startQueue');
+            vscode.window.showWarningMessage('Antigravity Auto Accept: Set mode to "Queue" first.');
+            return;
+        }
+
+        // Ensure we have fresh CDP connections and injected helpers (chat webviews may not exist at activation time).
+        await this.ensureCdpReadyNow('startQueue', true);
+
+        this.runtimeQueue = this.buildRuntimeQueue();
+        this.queueIndex = 0;
+        this.isRunningQueue = true;
+        this.isStopped = false; // Clear stopped flag when starting
+        this.lastClickCount = 0;
+        this.lastClickTime = Date.now();
+        this.lastActivityTime = Date.now();
+        this.taskStartTime = Date.now();
+        this.hasSentCurrentItem = false;
+
+        this.log(`Scheduler: Starting queue with ${this.runtimeQueue.length} items`);
+
+        if (this.runtimeQueue.length === 0) {
+            this.log('Scheduler: Queue is empty, nothing to run');
+            if (options && options.source === 'manual') {
+                // Warning Dampener: Prevent spamming warnings loop
+                const now = Date.now();
+                if (this.queueWarningDampener && (now - this.queueWarningDampener < 5000)) {
+                    this.log('Scheduler: Suppressed empty queue warning (dampener active)');
+                } else {
+                    vscode.window.showWarningMessage('Antigravity Auto Accept: Prompt queue is empty. Add prompts first.');
+                    this.queueWarningDampener = now;
+                }
+            } else {
+                this.log('Scheduler: Suppressing empty queue warning (auto-start or no source)');
+            }
+            this.isRunningQueue = false;
+            this.hasSentCurrentItem = false;
+            return;
+        }
+
+        await this.executeCurrentQueueItem();
+    }
+
+    async advanceQueue() {
+        if (!this.isRunningQueue) return;
+
+        // In consume mode, remove the completed prompt from config immediately
+        if (this.config.queueMode === 'consume') {
+            await this.consumeCurrentPrompt();
+        }
+
+        this.queueIndex++;
+        this.lastClickCount = 0;
+        this.lastClickTime = Date.now();
+        this.lastActivityTime = Date.now();
+        this.taskStartTime = Date.now();
+        this.hasSentCurrentItem = false;
+
+        if (this.queueIndex >= this.runtimeQueue.length) {
+            if (this.config.queueMode === 'loop' && this.runtimeQueue.length > 0) {
+                this.log('Scheduler: Queue completed, looping...');
+                this.queueIndex = 0;
+                // Rebuild queue to respect any config changes
+                this.loadConfig();
+                this.runtimeQueue = this.buildRuntimeQueue();
+            } else {
+                this.log('Scheduler: Queue completed, stopping');
+                this.isRunningQueue = false;
+                vscode.window.showInformationMessage('Antigravity Auto Accept: Prompt queue completed!');
+                return;
+            }
+        }
+
+        await this.executeCurrentQueueItem();
+    }
+
+    async executeCurrentQueueItem() {
+        const runId = this.queueRunId;
+        if (!this.isRunningQueue || this.isStopped) return;
+        if (this.queueIndex >= this.runtimeQueue.length) return;
+
+        const item = this.runtimeQueue[this.queueIndex];
+        const itemType = item.type === 'check' ? 'Check Prompt' : `Task ${item.index + 1}`;
+
+        this.log(`Scheduler: Executing ${itemType}: "${item.text.substring(0, 50)}..."`);
+        this.conversationStatus = 'running';
+        vscode.window.showInformationMessage(`Antigravity Auto Accept: Sending ${itemType}`);
+
+        if (this.isStopped || runId !== this.queueRunId) return;
+        await this.sendPrompt(item.text);
+        // Note: addToHistory is called inside queuePrompt after successful send
+    }
+
+    async resume() {
+        this.isQuotaExhausted = false;
+
+        const resumeConfig = vscode.workspace.getConfiguration('auto-accept.antigravityQuota.resume');
+        const queueResumeEnabled = resumeConfig.get('enabled', true);
+
+        const autoContinueConfig = vscode.workspace.getConfiguration('auto-accept.autoContinue');
+        const autoContinueEnabled = autoContinueConfig.get('enabled', false);
+
+        // 1. Handle Queue Resume (Prioritized)
+        if (this.isRunningQueue && this.config.mode === 'queue') {
+            if (queueResumeEnabled) {
+                this.log('Scheduler: Quota reset, resuming queue task');
+                vscode.window.showInformationMessage('Antigravity Auto Accept: Quota reset! Resuming queue...');
+                this.lastClickTime = Date.now();
+                this.lastActivityTime = this.lastClickTime;
+                this.taskStartTime = Date.now();
+                this.lastClickCount = 0;
+                this.hasSentCurrentItem = false;
+                // Re-send current item to continue
+                await this.executeCurrentQueueItem();
+                return;
+            } else {
+                this.log('Scheduler: Quota reset, but queue resume disabled.');
+            }
+        }
+
+        // 2. Handle Generic Auto-Continue (if not in queue or queue resume disabled)
+        if (autoContinueEnabled) {
+            this.log('Scheduler: Quota reset, sending "Continue" prompt');
+            vscode.window.showInformationMessage('Antigravity Auto Accept: Quota reset! Sending "Continue"...');
+            await this.sendPrompt('Continue');
+        } else {
+            this.log('Scheduler: Quota reset, but auto-continue disabled.');
+        }
+
+        // NOTE: Do NOT auto-start queue if not running - user must explicitly click Start Queue.
+    }
+
+    async consumeCurrentPrompt() {
+        try {
+            const config = vscode.workspace.getConfiguration('auto-accept.schedule');
+            const prompts = config.get('prompts', []);
+            if (prompts.length > 0) {
+                // Remove the first prompt (the one that was just completed)
+                const remaining = prompts.slice(1);
+                await config.update('prompts', remaining, vscode.ConfigurationTarget.Global);
+                this.log(`Scheduler: Consumed prompt, ${remaining.length} remaining`);
+            }
+        } catch (e) {
+            this.log(`Scheduler: Error consuming prompt: ${e.message}`);
+        }
+    }
+
+    async consumeCompletedPrompts() {
+        try {
+            const config = vscode.workspace.getConfiguration('auto-accept.schedule');
+            // Clear the prompts array after successful completion
+            await config.update('prompts', [], vscode.ConfigurationTarget.Global);
+            this.log('Scheduler: Consumed prompts cleared from config');
+        } catch (e) {
+            this.log(`Scheduler: Error clearing consumed prompts: ${e.message}`);
+        }
+    }
+
+    setQuotaExhausted(exhausted) {
+        const wasExhausted = this.isQuotaExhausted;
+        this.isQuotaExhausted = exhausted;
+
+        if (wasExhausted && !exhausted) {
+            this.log('Scheduler: Quota transitioned from exhausted to available');
+            this.resume();
+        } else if (exhausted && !wasExhausted) {
+            this.log('Scheduler: Quota became exhausted, pausing queue');
+        }
+    }
+
+    async queuePrompt(text) {
+        const runId = this.queueRunId;
+        this.promptQueue = this.promptQueue.then(async () => {
+            // Check if queue was stopped before we could send
+            if (this.isStopped || runId !== this.queueRunId) {
+                this.log('Scheduler: Prompt cancelled (queue stopped)');
+                return;
+            }
+
+            this.lastRunTime = Date.now();
+            if (!text) return;
+
+            this.log(`Scheduler: Sending prompt "${text.substring(0, 50)}..."`);
+
+            // Use CDP only - the verified working method
+            if (this.cdpHandler) {
+                try {
+                    // Ensure CDP has scanned/injected latest chat surfaces before attempting to send.
+                    await this.ensureCdpReadyNow('queuePrompt');
+                    if (this.isStopped || runId !== this.queueRunId) return;
+
+                    const rawSentCount = await this.cdpHandler.sendPrompt(text, this.targetConversation);
+                    let sentCount = typeof rawSentCount === 'number' ? rawSentCount : (rawSentCount ? 1 : 0);
+                    if (this.isStopped || runId !== this.queueRunId) return;
+
+                    // One retry after a forced resync (chat webview can spawn after we started the queue)
+                    if (sentCount === 0 && this.ensureCdpReady) {
+                        this.log('Scheduler: Prompt not delivered, forcing CDP resync and retrying once...');
+                        await this.ensureCdpReadyNow('queuePrompt-retry', true);
+                        if (this.isStopped || runId !== this.queueRunId) return;
+                        const rawRetry = await this.cdpHandler.sendPrompt(text, this.targetConversation);
+                        sentCount = typeof rawRetry === 'number' ? rawRetry : (rawRetry ? 1 : 0);
+                        if (this.isStopped || runId !== this.queueRunId) return;
+                    }
+
+                    // CRITICAL FIX: If 0 prompts sent, we must abort, otherwise we wait for silence forever
+                    if (sentCount === 0) {
+                        throw new Error('Prompt not delivered (no active chat input / send function found).');
+                    }
+
+                    this.addToHistory(text, this.targetConversation);
+                    if (this.isRunningQueue && this.config.mode === 'queue') {
+                        this.hasSentCurrentItem = true;
+                        this.lastActivityTime = Date.now();
+                    }
+                    this.log(`Scheduler: Prompt sent via CDP (${sentCount} tabs)`);
+                } catch (err) {
+                    this.log(`Scheduler: CDP failed: ${err.message}`);
+                    vscode.window.showErrorMessage(`Queue Error: ${err.message}`);
+                    // Force stop queue on critical error to prevent "Running" ghost state
+                    this.stopQueue();
+                    return;
+                }
+            } else {
+                this.log('Scheduler: CDP handler not available');
+                if (this.isRunningQueue && this.config.mode === 'queue') {
+                    vscode.window.showErrorMessage('Queue Error: CDP handler not available.');
+                    this.stopQueue();
+                }
+            }
+        }).catch(err => {
+            this.log(`Scheduler Error: ${err.message}`);
+        });
+        return this.promptQueue;
+    }
+
+    async sendPrompt(text) {
+        return this.queuePrompt(text);
+    }
+
+    async trigger() {
+        const text = this.config.prompt;
+        return this.queuePrompt(text);
+    }
+
+    getStatus() {
+        return {
+            enabled: this.enabled,
+            mode: this.config.mode,
+            isRunningQueue: this.isRunningQueue,
+            queueLength: this.runtimeQueue.length,
+            queueIndex: this.queueIndex,
+            isQuotaExhausted: this.isQuotaExhausted,
+            targetConversation: this.targetConversation,
+            conversationStatus: this.conversationStatus,
+            isPaused: this.isPaused,
+            currentPrompt: this.getCurrentPrompt()
+        };
+    }
+
+    async getConversations() {
+        if (!this.cdpHandler) return [];
+        try {
+            return await this.cdpHandler.getConversations();
+        } catch (e) {
+            this.log(`Scheduler: Error getting conversations: ${e.message}`);
+            return [];
+        }
+    }
+
+    addToHistory(text, conversationId) {
+        const entry = {
+            text: text.substring(0, 100),
+            fullText: text,
+            timestamp: Date.now(),
+            status: 'sent',
+            conversationId: conversationId || this.targetConversation || 'current'
+        };
+        this.promptHistory.push(entry);
+        // Keep last 50 entries
+        if (this.promptHistory.length > 50) {
+            this.promptHistory.shift();
+        }
+        this.log(`Scheduler: Added to history: "${entry.text.substring(0, 50)}..."`);
+    }
+
+    getHistory() {
+        return this.promptHistory.map(h => ({
+            text: h.text,
+            timestamp: h.timestamp,
+            timeAgo: this.formatTimeAgo(h.timestamp),
+            status: h.status,
+            conversation: h.conversationId
+        }));
+    }
+
+    formatTimeAgo(ts) {
+        const diff = Date.now() - ts;
+        if (diff < 60000) return 'just now';
+        if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+        if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+        return Math.floor(diff / 86400000) + 'd ago';
+    }
+
+    setTargetConversation(conversationId) {
+        this.targetConversation = conversationId || '';
+        this.log(`Scheduler: Target conversation set to: "${this.targetConversation || 'current'}"`);
+    }
+
+    // Queue control methods
+    pauseQueue() {
+        if (!this.isRunningQueue || this.isPaused) return false;
+        this.isPaused = true;
+        this.log('Scheduler: Queue paused by user');
+        vscode.window.showInformationMessage('Queue paused.');
+        return true;
+    }
+
+    resumeQueue() {
+        if (!this.isRunningQueue || !this.isPaused) return false;
+        this.isPaused = false;
+        this.log('Scheduler: Queue resumed by user');
+        vscode.window.showInformationMessage('Queue resumed.');
+        // Trigger next check immediately
+        this.checkSilence();
+        return true;
+    }
+
+    async skipPrompt() {
+        if (!this.isRunningQueue) return false;
+        this.log('Scheduler: Skipping current prompt');
+        vscode.window.showInformationMessage('Skipping to next prompt...');
+
+        // Advance without sending current
+        this.queueIndex++;
+        this.isPaused = false; // Clear pause if set
+        this.lastClickCount = 0;
+        this.lastClickTime = Date.now();
+        this.lastActivityTime = Date.now();
+        this.taskStartTime = Date.now();
+        this.hasSentCurrentItem = false;
+
+        if (this.queueIndex >= this.runtimeQueue.length) {
+            this.log('Scheduler: No more prompts to skip to, queue complete');
+            this.isRunningQueue = false;
+            this.conversationStatus = 'idle';
+            return true;
+        }
+
+        // Execute next item
+        await this.executeCurrentQueueItem();
+        return true;
+    }
+
+    stopQueue() {
+        if (!this.isRunningQueue && this.runtimeQueue.length === 0) return false;
+        this.isRunningQueue = false;
+        this.isStopped = true; // Signal pending prompts to cancel
+        this.queueRunId++;
+        this.runtimeQueue = [];
+        this.queueIndex = 0;
+        this.conversationStatus = 'idle';
+        this.isPaused = false;
+        this.lastClickCount = 0;
+        this.lastClickTime = 0;
+        this.lastActivityTime = 0;
+        this.taskStartTime = 0;
+        this.hasSentCurrentItem = false;
+        // Reset the prompt queue to cancel pending operations
+        this.promptQueue = Promise.resolve();
+        this.log('Scheduler: Queue stopped by user');
+        vscode.window.showInformationMessage('Queue stopped.');
+        return true;
+    }
+
+    async resetQueue() {
+        // Stop the queue if running
+        this.isRunningQueue = false;
+        this.isStopped = false; // Reset the stopped flag
+        this.queueRunId++;
+        this.runtimeQueue = [];
+        this.queueIndex = 0;
+        this.conversationStatus = 'idle';
+        this.isPaused = false;
+        this.lastClickCount = 0;
+        this.lastClickTime = 0;
+        this.lastActivityTime = 0;
+        this.taskStartTime = 0;
+        this.hasSentCurrentItem = false;
+        this.promptQueue = Promise.resolve(); // Clear pending prompts
+
+        // Clear prompts from config
+        try {
+            const config = vscode.workspace.getConfiguration('auto-accept.schedule');
+            await config.update('prompts', [], vscode.ConfigurationTarget.Global);
+            this.log('Scheduler: Queue reset - all prompts cleared');
+        } catch (e) {
+            this.log(`Scheduler: Error resetting queue: ${e.message}`);
+        }
+
+        vscode.window.showInformationMessage('Queue reset.');
+        return true;
+    }
+
+    getCurrentPrompt() {
+        if (!this.isRunningQueue || this.queueIndex >= this.runtimeQueue.length) return null;
+        return this.runtimeQueue[this.queueIndex];
+    }
+}
 
 let scheduler;
 
 function detectIDE() {
     const appName = vscode.env.appName || '';
     if (appName.toLowerCase().includes('antigravity')) return 'Antigravity';
+    if (appName.toLowerCase().includes('cursor')) return 'Cursor';
     return 'Code'; // VS Code base
 }
 
-/**
- * Auto-fix CDP connection instead of showing popup.
- * Attempts silent relaunch with --remote-debugging-port=0 if discovery fails.
- */
-async function autoFixCDP() {
-    if (cdpPopupShownThisSession) return false;
+function getCdpExampleLaunchCommand(platform, ide, port) {
+    const p = port || 9004;
+    if (platform === 'win32') {
+        if (ide === 'Antigravity') return `"C:\\Users\\USER\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe" --remote-debugging-port=${p}`;
+        if (ide === 'Cursor') return `"C:\\Users\\USER\\AppData\\Local\\Programs\\cursor\\Cursor.exe" --remote-debugging-port=${p}`;
+        return `"C:\\Users\\USER\\AppData\\Local\\Programs\\Microsoft VS Code\\Code.exe" --remote-debugging-port=${p}`;
+    }
+    if (platform === 'darwin') {
+        if (ide === 'Antigravity') return `open -a "Antigravity" --args --remote-debugging-port=${p}`;
+        if (ide === 'Cursor') return `open -a "Cursor" --args --remote-debugging-port=${p}`;
+        return `open -a "Visual Studio Code" --args --remote-debugging-port=${p}`;
+    }
+    if (ide === 'Antigravity') return `antigravity --remote-debugging-port=${p}`;
+    if (ide === 'Cursor') return `cursor --remote-debugging-port=${p}`;
+    return `code --remote-debugging-port=${p}`;
+}
 
+async function autoFixCDP() {
     log('Auto-fixing CDP connection...');
 
-    // Step 1: Try auto-discovery (cdp-handler now does this internally)
     if (cdpHandler) {
         const available = await cdpHandler.isCDPAvailable();
         if (available) {
-            const activePort = cdpHandler.getActivePort();
-            log(`CDP auto-fix SUCCESS: found on port ${activePort}`);
-            configuredCdpPort = activePort;
+            const activePort = cdpHandler.getActivePort ? cdpHandler.getActivePort() : configuredCdpPort;
+            if (activePort && activePort !== configuredCdpPort) {
+                log(`CDP port auto-updated: ${configuredCdpPort} → ${activePort}`);
+                configuredCdpPort = activePort;
+            }
             return true;
         }
     }
 
-    // Step 2: Silent relaunch with --remote-debugging-port=0
     if (relauncher && !relaunchAttemptedThisSession) {
-        log('CDP not found. Attempting silent relaunch...');
+        log('CDP not found. Attempting automatic relaunch...');
         relaunchAttemptedThisSession = true;
-        const result = await relauncher.silentRelaunch();
-        if (result) return true;
-    }
-
-    // Step 3: If all fails, show a minimal non-modal notification (NOT the old scary popup)
-    if (!cdpPopupShownThisSession) {
-        cdpPopupShownThisSession = true;
-        vscode.window.showInformationMessage(
-            'Antigravity Multi Purpose Agent: CDP auto-connect failed. Will retry automatically.',
-            'Retry Now'
-        ).then(choice => {
-            if (choice === 'Retry Now' && cdpHandler) {
-                cdpHandler.isCDPAvailable().then(ok => {
-                    if (ok) vscode.window.showInformationMessage('Antigravity Multi Purpose Agent: Connected!');
-                });
-            }
-        });
+        const result = await relauncher.ensureCDPAndRelaunch();
+        return Boolean(result && result.relaunched);
     }
 
     return false;
 }
 
+/**
+ * Show a one-time popup with instructions for launching with remote debugging port
+ * Only shows once per session after relaunch has been attempted
+ */
+async function showCDPConnectionPopup() {
+    if (cdpPopupShownThisSession) return;
+
+    cdpPopupShownThisSession = true;
+
+    const osModule = require('os');
+    const platform = osModule.platform();
+    const port = configuredCdpPort || 9004;
+    const exampleCmd = getCdpExampleLaunchCommand(platform, currentIDE || detectIDE(), port);
+
+    log(`CDP connection failed. Showing one-time popup with launch instructions.`);
+
+    const choice = await vscode.window.showWarningMessage(
+        `Antigravity Auto Accept could not connect to CDP port ${port}. Please launch Antigravity with the remote debugging flag:\n\n${exampleCmd}`,
+        'Copy Command',
+        'Retry Now',
+        'Dismiss'
+    );
+
+    if (choice === 'Copy Command') {
+        await vscode.env.clipboard.writeText(exampleCmd);
+        vscode.window.showInformationMessage('Launch command copied to clipboard.');
+    } else if (choice === 'Retry Now' && cdpHandler) {
+        cdpPopupShownThisSession = false;
+        const ok = await cdpHandler.isCDPAvailable();
+        if (ok) {
+            vscode.window.showInformationMessage('Antigravity Auto Accept connected to CDP.');
+        } else {
+            await showCDPConnectionPopup();
+        }
+    }
+}
+
 async function activate(context) {
     globalContext = context;
-    console.log('Multi Purpose Extension: Activator called.');
+    console.log('Antigravity Auto Accept: Activator called.');
 
     // CRITICAL: Create status bar items FIRST before anything else
     try {
         statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-        statusBarItem.command = 'antigravity-mpa.toggle';
-        statusBarItem.text = '\u{23F3} Multi Purpose: Loading...';
-        statusBarItem.tooltip = 'Antigravity Multi Purpose Agent is initializing...';
+        statusBarItem.command = 'auto-accept.toggle';
+        statusBarItem.text = '\u{23F3} Antigravity: Loading...';
+        statusBarItem.tooltip = 'Antigravity Auto Accept is initializing...';
         context.subscriptions.push(statusBarItem);
         statusBarItem.show();
 
         statusSettingsItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
-        statusSettingsItem.command = 'antigravity-mpa.openSettings';
+        statusSettingsItem.command = 'auto-accept.openSettings';
         statusSettingsItem.text = '\u{2699}\u{FE0F}';
-        statusSettingsItem.tooltip = 'Multi Purpose Settings';
+        statusSettingsItem.tooltip = 'Antigravity Auto Accept Settings';
         context.subscriptions.push(statusSettingsItem);
         statusSettingsItem.show();
 
         // Antigravity Quota status bar item
         statusQuotaItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 97);
-        statusQuotaItem.command = 'antigravity-mpa.openSettings';
+        statusQuotaItem.command = 'auto-accept.openSettings';
         statusQuotaItem.text = '\u{1F4CA} Quota: --';
         statusQuotaItem.tooltip = 'Antigravity Quota - Click to open settings';
         context.subscriptions.push(statusQuotaItem);
@@ -179,13 +862,13 @@ async function activate(context) {
 
         // Queue Status bar item
         statusQueueItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 96);
-        statusQueueItem.command = 'antigravity-mpa.showQueueMenu';
+        statusQueueItem.command = 'auto-accept.showQueueMenu';
         statusQueueItem.text = '\u{1F4CB} Queue: Idle';
         statusQueueItem.tooltip = 'Prompt Queue - Click for controls';
         context.subscriptions.push(statusQueueItem);
         // Hidden by default, shown when queue is running
 
-        console.log('Antigravity Multi Purpose: Status bar items created and shown.');
+        console.log('Antigravity Auto Accept: Status bar items created and shown.');
     } catch (sbError) {
         console.error('CRITICAL: Failed to create status bar items:', sbError);
     }
@@ -216,11 +899,11 @@ async function activate(context) {
         currentIDE = detectIDE();
 
         // 2. Create Output Channel
-        outputChannel = vscode.window.createOutputChannel('Antigravity Multi Purpose Agent');
+        outputChannel = vscode.window.createOutputChannel('Antigravity Auto Accept');
         context.subscriptions.push(outputChannel);
 
-        log(`Multi Purpose: Activating...`);
-        log(`Multi Purpose: Detected environment: ${currentIDE.toUpperCase()}`);
+        log(`Antigravity Auto Accept: Activating...`);
+        log(`Antigravity Auto Accept: Detected environment: ${currentIDE.toUpperCase()}`);
 
         // Setup Focus Listener - Push state to browser (authoritative source)
         vscode.window.onDidChangeWindowState(async (e) => {
@@ -229,7 +912,7 @@ async function activate(context) {
                 await cdpHandler.setFocusState(e.focused);
             }
 
-            // When user returns and antigravity-mpa is running, check for away actions
+            // When user returns and auto-accept is running, check for away actions
             if (e.focused && isEnabled) {
                 log(`[Away] Window focus detected by VS Code API. Checking for away actions...`);
                 // Wait a tiny bit for CDP to settle after focus state is pushed
@@ -243,7 +926,7 @@ async function activate(context) {
             const { Relauncher } = require('./relauncher');
 
             // Read configured CDP port from settings
-            configuredCdpPort = vscode.workspace.getConfiguration('antigravity-mpa').get('cdpPort', 9004);
+            configuredCdpPort = vscode.workspace.getConfiguration('auto-accept').get('cdpPort', 0);
             log(`Configured CDP port: ${configuredCdpPort}`);
 
             cdpHandler = new CDPHandler(log, configuredCdpPort);
@@ -288,11 +971,11 @@ async function activate(context) {
             debugHandler.startServer();
         } catch (err) {
             log(`Failed to initialize CDP handlers: ${err.message}`);
-            vscode.window.showErrorMessage(`Multi Purpose Error: ${err.message}`);
+            vscode.window.showErrorMessage(`Antigravity Auto Accept Error: ${err.message}`);
         }
 
         // 3.5 Initialize Antigravity Client and Quota Display
-        const quotaConfig = vscode.workspace.getConfiguration('antigravity-mpa.antigravityQuota');
+        const quotaConfig = vscode.workspace.getConfiguration('auto-accept.antigravityQuota');
         const quotaEnabled = quotaConfig.get('enabled', true);
         const quotaPollInterval = quotaConfig.get('pollInterval', 60) * 1000; // Convert to ms
 
@@ -328,12 +1011,12 @@ async function activate(context) {
 
         // 5. Register Commands
         context.subscriptions.push(
-            vscode.commands.registerCommand('antigravity-mpa.toggle', () => handleToggle(context)),
-            vscode.commands.registerCommand('antigravity-mpa.relaunch', () => handleRelaunch()),
-            vscode.commands.registerCommand('antigravity-mpa.updateFrequency', (freq) => handleFrequencyUpdate(context, freq)),
-            vscode.commands.registerCommand('antigravity-mpa.updateBannedCommands', (commands) => handleBannedCommandsUpdate(context, commands)),
-            vscode.commands.registerCommand('antigravity-mpa.getBannedCommands', () => bannedCommands),
-            vscode.commands.registerCommand('antigravity-mpa.getROIStats', async () => {
+            vscode.commands.registerCommand('auto-accept.toggle', () => handleToggle(context)),
+            vscode.commands.registerCommand('auto-accept.relaunch', () => handleRelaunch()),
+            vscode.commands.registerCommand('auto-accept.updateFrequency', (freq) => handleFrequencyUpdate(context, freq)),
+            vscode.commands.registerCommand('auto-accept.updateBannedCommands', (commands) => handleBannedCommandsUpdate(context, commands)),
+            vscode.commands.registerCommand('auto-accept.getBannedCommands', () => bannedCommands),
+            vscode.commands.registerCommand('auto-accept.getROIStats', async () => {
                 const stats = await loadROIStats(context);
                 const timeSavedSeconds = stats.clicksThisWeek * SECONDS_PER_CLICK;
                 const timeSavedMinutes = Math.round(timeSavedSeconds / 60);
@@ -345,7 +1028,7 @@ async function activate(context) {
                         : `${timeSavedMinutes} minutes`
                 };
             }),
-            vscode.commands.registerCommand('antigravity-mpa.openSettings', () => {
+            vscode.commands.registerCommand('auto-accept.openSettings', () => {
                 const panel = getSettingsPanel();
                 if (panel) {
                     panel.createOrShow(context.extensionUri, context);
@@ -353,14 +1036,14 @@ async function activate(context) {
                     vscode.window.showErrorMessage('Failed to load Settings Panel.');
                 }
             }),
-            vscode.commands.registerCommand('antigravity-mpa.checkAntigravityStatus', () => handleCheckAntigravityStatus()),
-            vscode.commands.registerCommand('antigravity-mpa.getAntigravityQuota', () => handleGetAntigravityQuota()),
-            vscode.commands.registerCommand('antigravity-mpa.toggleAntigravityQuota', (value) => handleToggleAntigravityQuota(value)),
-            vscode.commands.registerCommand('antigravity-mpa.getAntigravityQuotaEnabled', () => {
-                const config = vscode.workspace.getConfiguration('antigravity-mpa.antigravityQuota');
+            vscode.commands.registerCommand('auto-accept.checkAntigravityStatus', () => handleCheckAntigravityStatus()),
+            vscode.commands.registerCommand('auto-accept.getAntigravityQuota', () => handleGetAntigravityQuota()),
+            vscode.commands.registerCommand('auto-accept.toggleAntigravityQuota', (value) => handleToggleAntigravityQuota(value)),
+            vscode.commands.registerCommand('auto-accept.getAntigravityQuotaEnabled', () => {
+                const config = vscode.workspace.getConfiguration('auto-accept.antigravityQuota');
                 return config.get('enabled', true);
             }),
-            vscode.commands.registerCommand('antigravity-mpa.startQueue', async (options) => {
+            vscode.commands.registerCommand('auto-accept.startQueue', async (options) => {
                 log('[Scheduler] Queue start requested via command');
                 if (scheduler) {
                     // Ensure CDP connects/injects the active chat surface before starting the queue.
@@ -369,53 +1052,53 @@ async function activate(context) {
                     log('[Scheduler] Queue start handled via command');
                 } else {
                     log('[Scheduler] Cannot start queue - scheduler not initialized');
-                    vscode.window.showWarningMessage('Antigravity Multi Purpose: Scheduler not ready. Please try again.');
+                    vscode.window.showWarningMessage('Antigravity Auto Accept: Scheduler not ready. Please try again.');
                 }
             }),
-            vscode.commands.registerCommand('antigravity-mpa.getQueueStatus', () => {
+            vscode.commands.registerCommand('auto-accept.getQueueStatus', () => {
                 if (scheduler) {
                     return scheduler.getStatus();
                 }
                 return { enabled: false, isRunningQueue: false, queueLength: 0, queueIndex: 0, isQuotaExhausted: false };
             }),
-            vscode.commands.registerCommand('antigravity-mpa.getConversations', async () => {
+            vscode.commands.registerCommand('auto-accept.getConversations', async () => {
                 if (scheduler) {
                     return await scheduler.getConversations();
                 }
                 return [];
             }),
-            vscode.commands.registerCommand('antigravity-mpa.getPromptHistory', () => {
+            vscode.commands.registerCommand('auto-accept.getPromptHistory', () => {
                 if (scheduler) {
                     return scheduler.getHistory();
                 }
                 return [];
             }),
-            vscode.commands.registerCommand('antigravity-mpa.setTargetConversation', (conversationId) => {
+            vscode.commands.registerCommand('auto-accept.setTargetConversation', (conversationId) => {
                 if (scheduler) {
                     scheduler.setTargetConversation(conversationId);
                 }
             }),
-            vscode.commands.registerCommand('antigravity-mpa.pauseQueue', () => {
+            vscode.commands.registerCommand('auto-accept.pauseQueue', () => {
                 if (scheduler) {
                     scheduler.pauseQueue();
                 }
             }),
-            vscode.commands.registerCommand('antigravity-mpa.resumeQueue', () => {
+            vscode.commands.registerCommand('auto-accept.resumeQueue', () => {
                 if (scheduler) {
                     scheduler.resumeQueue();
                 }
             }),
-            vscode.commands.registerCommand('antigravity-mpa.skipPrompt', async () => {
+            vscode.commands.registerCommand('auto-accept.skipPrompt', async () => {
                 if (scheduler) {
                     await scheduler.skipPrompt();
                 }
             }),
-            vscode.commands.registerCommand('antigravity-mpa.stopQueue', () => {
+            vscode.commands.registerCommand('auto-accept.stopQueue', () => {
                 if (scheduler) {
                     scheduler.stopQueue();
                 }
             }),
-            vscode.commands.registerCommand('antigravity-mpa.showQueueMenu', async () => {
+            vscode.commands.registerCommand('auto-accept.showQueueMenu', async () => {
                 if (!scheduler) return;
 
                 const status = scheduler.getStatus();
@@ -442,23 +1125,19 @@ async function activate(context) {
                         case 'resume': scheduler.resumeQueue(); break;
                         case 'skip': await scheduler.skipPrompt(); break;
                         case 'stop': scheduler.stopQueue(); break;
-                        case 'settings': vscode.commands.executeCommand('antigravity-mpa.openSettings'); break;
+                        case 'settings': vscode.commands.executeCommand('auto-accept.openSettings'); break;
                     }
                 }
             }),
-            vscode.commands.registerCommand('antigravity-mpa.resetSettings', async () => {
-                // Reset all extension settings
-                await context.globalState.update(GLOBAL_STATE_KEY, false);
-                await context.globalState.update(FREQ_STATE_KEY, 1000);
-                await context.globalState.update(BANNED_COMMANDS_KEY, undefined);
-                await context.globalState.update(ROI_STATS_KEY, undefined);
+            vscode.commands.registerCommand('auto-accept.resetSettings', async () => {
+                await resetExtensionSettings(context);
                 isEnabled = false;
                 bannedCommands = [];
-                vscode.window.showInformationMessage('Antigravity Multi Purpose: All settings reset to defaults.');
+                vscode.window.showInformationMessage('Antigravity Auto Accept: All settings reset to defaults.');
                 updateStatusBar();
             }),
             // Debug Mode Command - Allows AI agent programmatic control
-            vscode.commands.registerCommand('antigravity-mpa.debugCommand', async (action, params = {}) => {
+            vscode.commands.registerCommand('auto-accept.debugCommand', async (action, params = {}) => {
                 if (debugHandler) {
                     return await debugHandler.handleCommand(action, params);
                 }
@@ -468,8 +1147,8 @@ async function activate(context) {
 
         // Monitor configuration changes for Debug Mode
         context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('antigravity-mpa.debugMode.enabled') && debugHandler) {
-                const enabled = vscode.workspace.getConfiguration('antigravity-mpa.debugMode').get('enabled', false);
+            if (e.affectsConfiguration('auto-accept.debugMode.enabled') && debugHandler) {
+                const enabled = vscode.workspace.getConfiguration('auto-accept.debugMode').get('enabled', false);
                 if (enabled) {
                     debugHandler.startServer();
                 } else {
@@ -486,32 +1165,30 @@ async function activate(context) {
             log(`Error in environment check: ${err.message}`);
         }
 
-        log('Antigravity Multi Purpose: Activation complete');
+        log('Antigravity Auto Accept: Activation complete');
     } catch (error) {
         console.error('ACTIVATION CRITICAL FAILURE:', error);
         log(`ACTIVATION CRITICAL FAILURE: ${error.message}`);
-        vscode.window.showErrorMessage(`Multi Purpose Extension failed to activate: ${error.message}`);
+        vscode.window.showErrorMessage(`Antigravity Auto Accept failed to activate: ${error.message}`);
     }
 }
 
 async function ensureCDPOrPrompt(showPrompt = false) {
     if (!cdpHandler) return false;
 
-    log('Checking for active CDP session (with auto-discovery)...');
+    log('Checking for active CDP session...');
     const cdpAvailable = await cdpHandler.isCDPAvailable();
-    log(`Environment check: CDP Available = ${cdpAvailable}`);
+    const activePort = cdpHandler.getActivePort ? cdpHandler.getActivePort() : configuredCdpPort;
+    if (activePort && activePort !== configuredCdpPort) {
+        configuredCdpPort = activePort;
+    }
+    log(`Environment check: CDP Available = ${cdpAvailable}${activePort ? ` (port ${activePort})` : ''}`);
 
     if (cdpAvailable) {
-        // Update configured port if auto-discovered
-        const activePort = cdpHandler.getActivePort();
-        if (activePort !== configuredCdpPort) {
-            log(`CDP port auto-updated: ${configuredCdpPort} → ${activePort}`);
-            configuredCdpPort = activePort;
-        }
         log('CDP is active and available.');
         return true;
     } else {
-        log(`CDP not found. Attempting auto-fix...`);
+        log(`CDP not found${configuredCdpPort ? ` on port ${configuredCdpPort}` : ''}.`);
         if (showPrompt) {
             return await autoFixCDP();
         }
@@ -521,9 +1198,7 @@ async function ensureCDPOrPrompt(showPrompt = false) {
 
 async function checkEnvironmentAndStart() {
     const vscode = require('vscode');
-    // Support both original and forked extension IDs
-    const ext = vscode.extensions.getExtension('hungpixi.hungpixi-multi-purpose-agent');
-    const currentVersion = ext?.packageJSON?.version || '0.0.0';
+    const currentVersion = vscode.extensions.getExtension('hungpixi.antigravity-auto-accept')?.packageJSON?.version || '0.0.0';
     const storedVersion = globalContext.globalState.get(EXTENSION_VERSION_KEY, null);
 
     // Detect fresh install or reinstall (version changed)
@@ -536,46 +1211,47 @@ async function checkEnvironmentAndStart() {
         await globalContext.globalState.update(EXTENSION_VERSION_KEY, currentVersion);
     }
 
-    // Auto-discovery: try to find CDP silently (NO popup, NO restart prompt)
     const cdpAvailable = cdpHandler ? await cdpHandler.isCDPAvailable() : false;
 
     if (cdpAvailable) {
-        log('CDP auto-discovered successfully.');
-        await globalContext.globalState.update(CDP_SETUP_COMPLETED_KEY, true);
-        
-        // Update port if auto-discovered a different one
-        const activePort = cdpHandler.getActivePort();
-        if (activePort !== configuredCdpPort) {
+        const activePort = cdpHandler.getActivePort ? cdpHandler.getActivePort() : configuredCdpPort;
+        if (activePort && activePort !== configuredCdpPort) {
             log(`CDP port auto-updated: ${configuredCdpPort} → ${activePort}`);
             configuredCdpPort = activePort;
         }
+        log('CDP available at startup.');
+        await globalContext.globalState.update(CDP_SETUP_COMPLETED_KEY, true);
     } else {
-        log('CDP not available at startup. Will auto-fix on first toggle or retry in background.');
-        // Background retry: try auto-fix after a short delay (Antigravity might still be initializing)
+        log('CDP not available at startup. Scheduling retry and auto-fix.');
         setTimeout(async () => {
             const retryAvailable = cdpHandler ? await cdpHandler.isCDPAvailable() : false;
             if (retryAvailable) {
-                log('Background retry: CDP now available!');
+                const activePort = cdpHandler.getActivePort ? cdpHandler.getActivePort() : configuredCdpPort;
+                if (activePort && activePort !== configuredCdpPort) {
+                    log(`Background retry discovered CDP port ${activePort}.`);
+                    configuredCdpPort = activePort;
+                }
                 await globalContext.globalState.update(CDP_SETUP_COMPLETED_KEY, true);
                 if (isEnabled) {
                     await startPolling();
                     startStatsCollection(globalContext);
                 }
                 updateStatusBar();
-            } else if (relauncher) {
-                // One silent relaunch attempt
-                log('Background retry failed. Attempting silent relaunch...');
-                await autoFixCDP();
+                return;
+            }
+
+            const fixed = await autoFixCDP();
+            if (!fixed) {
+                await showCDPConnectionPopup();
             }
         }, 5000);
     }
 
-    // Normal startup: if extension was enabled and CDP available, restore state
+    // Normal startup: if extension was enabled, try to restore state
     if (isEnabled) {
-        log('Initializing Multi Purpose environment...');
+        log('Initializing Antigravity Auto Accept environment...');
         if (!cdpAvailable) {
-            log('Multi Purpose was enabled but CDP not yet available. Will retry when CDP connects.');
-            // DON'T reset to OFF — let background retry handle it
+            log('Antigravity Auto Accept was enabled but CDP not yet available. Will retry when CDP connects.');
         } else {
             await startPolling();
             startStatsCollection(globalContext);
@@ -589,16 +1265,19 @@ async function handleToggle(context) {
     log(`  Previous isEnabled: ${isEnabled}`);
 
     try {
-        // Auto-discovery: try to find CDP automatically (no popup, no relaunch prompt)
+        // Check CDP availability first
         const cdpAvailable = cdpHandler ? await cdpHandler.isCDPAvailable() : false;
 
-        // If trying to enable but CDP not available, attempt auto-fix silently
         if (!isEnabled && !cdpAvailable) {
-            log('Antigravity Multi Purpose: CDP not available. Attempting auto-fix...');
+            log('Antigravity Auto Accept: CDP not available. Attempting auto-fix.');
             const fixed = await autoFixCDP();
             if (!fixed) {
-                log('Antigravity Multi Purpose: Auto-fix could not connect. Toggle will proceed anyway (retries in background).');
-                // Don't block — let user toggle ON, we'll retry in background
+                vscode.window.showWarningMessage(
+                    'Antigravity Auto Accept: CDP not connected yet. Auto-accept will start once CDP is available.',
+                    'Show Instructions'
+                ).then(choice => {
+                    if (choice === 'Show Instructions') showCDPConnectionPopup();
+                });
             }
         }
 
@@ -614,13 +1293,13 @@ async function handleToggle(context) {
 
         // Do CDP operations in background (don't block toggle)
         if (isEnabled) {
-            log('Antigravity Multi Purpose: Enabled');
+            log('Antigravity Auto Accept: Enabled');
             // These operations happen in background
             ensureCDPOrPrompt(true).then(() => startPolling());
             startStatsCollection(context);
             incrementSessionCount(context);
         } else {
-            log('Antigravity Multi Purpose: Disabled');
+            log('Antigravity Auto Accept: Disabled');
 
             // Fire-and-forget: Show session summary notification (non-blocking)
             if (cdpHandler) {
@@ -707,7 +1386,7 @@ function updateQueueStatusBar() {
 
 async function startPolling() {
     if (pollTimer) clearInterval(pollTimer);
-    log('Antigravity Multi Purpose: Monitoring session...');
+    log('Antigravity Auto Accept: Monitoring session...');
 
     // Initial trigger
     await syncSessions();
@@ -758,7 +1437,7 @@ async function stopPolling() {
     }
     if (scheduler) scheduler.stop();
     if (cdpHandler) await cdpHandler.stop();
-    log('Antigravity Multi Purpose: Polling stopped');
+    log('Antigravity Auto Accept: Polling stopped');
 }
 
 // --- ROI Stats Collection ---
@@ -822,7 +1501,7 @@ async function showWeeklySummaryNotification(context, lastWeekStats) {
         timeStr = `${timeSavedMinutes} minutes`;
     }
 
-    const message = `\u{1F4CA} Last week, Multi Purpose saved you ${timeStr} by auto-clicking ${lastWeekStats.clicksThisWeek} buttons!`;
+    const message = `\u{1F4CA} Last week, Antigravity Auto Accept saved you ${timeStr} by auto-clicking ${lastWeekStats.clicksThisWeek} buttons!`;
 
     let detail = '';
     if (lastWeekStats.sessionsThisWeek > 0) {
@@ -858,7 +1537,7 @@ async function showSessionSummaryNotification(context, summary) {
 
     const lines = [
         `\u{1F7E2} This session:`,
-        `- ${summary.clicks} actions antigravity-mpaed`,
+        `- ${summary.clicks} actions auto-accepted`,
         `- ${summary.terminalCommands} terminal commands`,
         `- ${summary.fileEdits} file edits`,
         `- ${summary.blocked} interruptions blocked`
@@ -871,7 +1550,7 @@ async function showSessionSummaryNotification(context, summary) {
     const message = lines.join('\n');
 
     vscode.window.showInformationMessage(
-        `\u{1F916} Multi Purpose: ${summary.clicks} actions handled this session`,
+        `\u{1F916} Antigravity Auto Accept: ${summary.clicks} actions handled this session`,
         { detail: message },
         'View Stats'
     ).then(choice => {
@@ -892,7 +1571,7 @@ async function showAwayActionsNotification(context, actionsCount) {
     }
     log(`[Notification] Showing away actions notification for ${actionsCount} actions`);
 
-    const message = `\u{1F680} Multi Purpose handled ${actionsCount} action${actionsCount > 1 ? 's' : ''} while you were away.`;
+    const message = `\u{1F680} Antigravity Auto Accept handled ${actionsCount} action${actionsCount > 1 ? 's' : ''} while you were away.`;
     const detail = `Agents stayed autonomous while you focused elsewhere.`;
 
     vscode.window.showInformationMessage(
@@ -985,7 +1664,7 @@ function updateStatusBar() {
 
     if (isEnabled) {
         let statusText = 'ON';
-        let tooltip = `Multi Purpose is running.`;
+        let tooltip = `Antigravity Auto Accept is running.`;
         let bgColor = undefined;
         let icon = '\u{2705}';
 
@@ -1001,13 +1680,13 @@ function updateStatusBar() {
             icon = '\u{1F504}';
         }
 
-        statusBarItem.text = `${icon} Multi Purpose: ${statusText}`;
+        statusBarItem.text = `${icon} Antigravity: ${statusText}`;
         statusBarItem.tooltip = tooltip;
         statusBarItem.backgroundColor = bgColor;
 
     } else {
-        statusBarItem.text = '\u{2B55} Multi Purpose: OFF';
-        statusBarItem.tooltip = 'Click to enable Multi Purpose.';
+        statusBarItem.text = '\u{2B55} Antigravity: OFF';
+        statusBarItem.tooltip = 'Click to enable Antigravity Auto Accept.';
         statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     }
 }
@@ -1208,7 +1887,7 @@ function stopQuotaPolling() {
  * Toggle Antigravity Quota display
  */
 function handleToggleAntigravityQuota(enabled) {
-    const config = vscode.workspace.getConfiguration('antigravity-mpa.antigravityQuota');
+    const config = vscode.workspace.getConfiguration('auto-accept.antigravityQuota');
     config.update('enabled', enabled, vscode.ConfigurationTarget.Global);
 
     if (enabled) {
@@ -1236,7 +1915,7 @@ function startDebugServer() {
     if (debugServer) return;
 
     // Check if debug mode is enabled
-    const debugEnabled = vscode.workspace.getConfiguration('antigravity-mpa.debugMode').get('enabled', false);
+    const debugEnabled = vscode.workspace.getConfiguration('auto-accept.debugMode').get('enabled', false);
     if (!debugEnabled) return;
 
     try {
@@ -1269,7 +1948,7 @@ function startDebugServer() {
                     const { action, params } = data;
                     log(`[DebugServer] Received action: ${action}`);
 
-                    const result = await vscode.commands.executeCommand('antigravity-mpa.debugCommand', action, params);
+                    const result = await vscode.commands.executeCommand('auto-accept.debugCommand', action, params);
                     res.writeHead(200, { 'Content-Type': 'application/json' });
                     res.end(JSON.stringify(result));
                 } catch (e) {
@@ -1343,4 +2022,4 @@ async function deactivate() {
     }
 }
 
-module.exports = { activate, deactivate };
+module.exports = { activate, deactivate, __testables: { resetExtensionSettings } };

@@ -7,3 +7,23 @@ context.md
 *.log
 .DS_Store
 Thumbs.db
+
+# Temp/analysis files
+antigrav_ext/
+rodhayl_ext/
+*_backup.js
+patch*.py
+temp_*.js
+diff_*.txt
+gitlog*.txt
+exthost*.log
+exthost_path.txt
+ext_v*.txt
+tree.txt
+image.png
+debug_backup.js
+impl_backup.js
+settings_backup.js
+ext_backup.js
+.cursor/
+.vscode/

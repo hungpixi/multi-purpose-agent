@@ -13,7 +13,7 @@ This document details the implementation of programmatically sending messages to
 
 ## Overview
 
-The Multi Purpose Agent extension needs to send prompts to the Antigravity agent chat programmatically. This is required for:
+The Auto Accept extension needs to send prompts to the Antigravity agent chat programmatically. This is required for:
 - **Prompt Queue** - Automatically sending a series of prompts at scheduled intervals
 - **Scheduler** - Running prompts based on cron schedules or timers
 - **Testing** - Verifying the extension works correctly

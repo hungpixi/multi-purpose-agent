@@ -1,4 +1,4 @@
-﻿# Multi Purpose Agent - Workflows & Architecture
+# Multi Purpose Agent - Workflows & Architecture
 
 This document describes how the Multi Purpose Agent VS Code extension works end-to-end: CDP connectivity, browser-side automation, scheduling/queueing, quota awareness, safety features, and debugging.
 
@@ -8,12 +8,12 @@ This document describes how the Multi Purpose Agent VS Code extension works end-
 
 **Primary components**
 
-- **Extension Host (Node.js)**: [extension-impl.js](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/main_scripts/extension-impl.js)
-- **CDP bridge**: [cdp-handler.js](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/main_scripts/cdp-handler.js)
-- **Browser payload**: [full_cdp_script.js](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/main_scripts/full_cdp_script.js)
-- **Settings UI (WebView)**: [settings-panel.js](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/main_scripts/settings-panel.js)
-- **Debug server (optional)**: [debug-handler.js](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/main_scripts/debug-handler.js)
-- **Quota client (optional)**: [AntigravityClient](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/main_scripts/antigravity/client.js)
+- **Extension Host (Node.js)**: [extension-impl.js](file:///c:/Users/rulfe/GitHub/auto-accept-agent/main_scripts/extension-impl.js)
+- **CDP bridge**: [cdp-handler.js](file:///c:/Users/rulfe/GitHub/auto-accept-agent/main_scripts/cdp-handler.js)
+- **Browser payload**: [full_cdp_script.js](file:///c:/Users/rulfe/GitHub/auto-accept-agent/main_scripts/full_cdp_script.js)
+- **Settings UI (WebView)**: [settings-panel.js](file:///c:/Users/rulfe/GitHub/auto-accept-agent/main_scripts/settings-panel.js)
+- **Debug server (optional)**: [debug-handler.js](file:///c:/Users/rulfe/GitHub/auto-accept-agent/main_scripts/debug-handler.js)
+- **Quota client (optional)**: [AntigravityClient](file:///c:/Users/rulfe/GitHub/auto-accept-agent/main_scripts/antigravity/client.js)
 
 **Data flow (typical)**
 
@@ -35,12 +35,12 @@ This document describes how the Multi Purpose Agent VS Code extension works end-
 **Injection sequence**
 
 1. For each target, connect to its `webSocketDebuggerUrl`.
-2. Inject [full_cdp_script.js](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/main_scripts/full_cdp_script.js) once per target.
+2. Inject [full_cdp_script.js](file:///c:/Users/rulfe/GitHub/auto-accept-agent/main_scripts/full_cdp_script.js) once per target.
 3. Call `window.__autoAcceptStart(config)` on that target to start the browser-side loop.
 
 ---
 
-## 3. Browser-Side antigravity-mpa Loop
+## 3. Browser-Side Auto-Accept Loop
 
 The browser payload maintains a global state object `window.__autoAcceptState` (analytics, per-session flags, and shared counters).
 
@@ -87,7 +87,7 @@ The Scheduler lives in the extension host and supports:
 
 **Queue execution**
 
-- Runtime queue is built from `antigravity-mpa.schedule.prompts` (and optionally `checkPrompt.*`).
+- Runtime queue is built from `auto-accept.schedule.prompts` (and optionally `checkPrompt.*`).
 - Queue progression uses a silence heuristic:
   - Every 5 seconds, the Scheduler reads click stats from CDP (`cdpHandler.getStats()`).
   - After the current queue item has been sent successfully and has been running for at least 10 seconds:
@@ -140,19 +140,19 @@ The browser payload runs inside a live page context. A syntax error in the paylo
 Practical workflow:
 
 1. Use the live debug tooling to execute and iterate on DOM selectors and helper logic against a real Antigravity tab.
-2. Apply changes to [full_cdp_script.js](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/main_scripts/full_cdp_script.js).
+2. Apply changes to [full_cdp_script.js](file:///c:/Users/rulfe/GitHub/auto-accept-agent/main_scripts/full_cdp_script.js).
 3. Reload the VS Code extension host to re-inject the payload into targets.
 
 ### Adding or changing settings
 
 Settings changes usually touch four layers:
 
-1. [package.json](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/package.json) schema (`contributes.configuration`)
-2. [settings-panel.js](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/main_scripts/settings-panel.js) UI + message handlers
-3. [extension-impl.js](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/main_scripts/extension-impl.js) config reads/writes and behavior wiring
-4. [cdp-handler.js](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/main_scripts/cdp-handler.js) when behavior affects browser payload config or evaluation
+1. [package.json](file:///c:/Users/rulfe/GitHub/auto-accept-agent/package.json) schema (`contributes.configuration`)
+2. [settings-panel.js](file:///c:/Users/rulfe/GitHub/auto-accept-agent/main_scripts/settings-panel.js) UI + message handlers
+3. [extension-impl.js](file:///c:/Users/rulfe/GitHub/auto-accept-agent/main_scripts/extension-impl.js) config reads/writes and behavior wiring
+4. [cdp-handler.js](file:///c:/Users/rulfe/GitHub/auto-accept-agent/main_scripts/cdp-handler.js) when behavior affects browser payload config or evaluation
 
 ### Relauncher safety
 
-The Relauncher modifies OS-level launch shortcuts to ensure Antigravity is started with `--remote-debugging-port=9004`. Treat changes to [relauncher.js](file:///c:/Users/rulfe/GitHub/antigravity-mpa-agent/main_scripts/relauncher.js) as high-impact and validate on each platform you touch.
+The Relauncher modifies OS-level launch shortcuts to ensure Antigravity is started with `--remote-debugging-port=9004`. Treat changes to [relauncher.js](file:///c:/Users/rulfe/GitHub/auto-accept-agent/main_scripts/relauncher.js) as high-impact and validate on each platform you touch.
 

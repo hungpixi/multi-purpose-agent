@@ -1,10 +1,11 @@
-﻿const WebSocket = require('ws');
+const WebSocket = require('ws');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { CDPDiscovery } = require('./cdp-discovery');
+const os = require('os');
+const { execSync } = require('child_process');
 
-const DEFAULT_CDP_PORT = 9004;
+const DEFAULT_CDP_PORT = 0;
 
 class CDPHandler {
     constructor(logger = console.log, port = DEFAULT_CDP_PORT) {
@@ -13,11 +14,6 @@ class CDPHandler {
         this.connections = new Map(); // port:pageId -> {ws, injected}
         this.isEnabled = false;
         this.msgId = 1;
-        
-        // Auto-discovery integration
-        this.discovery = new CDPDiscovery(logger);
-        this._discoveryAttempted = false;
-        this._autoDiscoveryEnabled = true;
     }
 
     log(msg) {
@@ -25,58 +21,34 @@ class CDPHandler {
     }
 
     /**
-     * Check if the configured CDP port is active.
-     * Now with auto-discovery: if configured port fails, try to find the real port.
+     * Check if the configured CDP port is active
      */
     async isCDPAvailable() {
-        // Try configured port first (fast path)
         try {
-            const pages = await this._getPages(this.port);
-            if (pages.length > 0) return true;
-        } catch (e) { /* configured port failed */ }
-
-        // Auto-discovery: try to find the real CDP port
-        if (this._autoDiscoveryEnabled) {
-            const discoveredPort = await this.discovery.discover();
-            if (discoveredPort && discoveredPort !== this.port) {
-                this.log(`Auto-discovered CDP port: ${discoveredPort} (was: ${this.port})`);
-                this.port = discoveredPort;
-                try {
-                    const pages = await this._getPages(this.port);
-                    return pages.length > 0;
-                } catch (e) { /* discovered port also failed */ }
-            }
+            const resolvedPort = await this._resolvePort();
+            const pages = await this._getPages(resolvedPort);
+            return pages.length > 0;
+        } catch (e) {
+            return false;
         }
-
-        return false;
     }
 
     /**
-     * Start/maintain the CDP connection and injection loop.
-     * Now with auto-discovery built in.
+     * Start/maintain the CDP connection and injection loop
      */
     async start(config) {
         this.isEnabled = true;
         if (config.port) this.port = config.port;
-        this.workspaceName = config.workspaceName || null;
+        this.workspaceName = config.workspaceName || null; // Store for later use in sendPrompt
+        const resolvedPort = await this._resolvePort();
+        this.port = resolvedPort;
         this.log(`Connecting to CDP on port ${this.port}...`);
         if (this.workspaceName) {
             this.log(`Current workspace: ${this.workspaceName}`);
         }
 
         try {
-            let pages = await this._getPages(this.port);
-            
-            // Auto-discovery: if no pages on configured port, try discovery
-            if (pages.length === 0 && this._autoDiscoveryEnabled) {
-                const discoveredPort = await this.discovery.discover();
-                if (discoveredPort && discoveredPort !== this.port) {
-                    this.log(`Auto-discover: switching from port ${this.port} to ${discoveredPort}`);
-                    this.port = discoveredPort;
-                    pages = await this._getPages(this.port);
-                }
-            }
-            
+            const pages = await this._getPages(this.port);
             for (const page of pages) {
                 const id = `${this.port}:${page.id}`;
                 if (!this.connections.has(id)) {
@@ -100,32 +72,186 @@ class CDPHandler {
             } catch (e) { }
         }
         this.connections.clear();
-        this.discovery.clearCache();
     }
 
     async _getPages(port) {
-        return new Promise((resolve, reject) => {
-            const req = http.get({ hostname: '127.0.0.1', port, path: '/json/list', timeout: 500 }, (res) => {
+        const pages = await this._fetchJson(port, '/json/list');
+        const candidates = Array.isArray(pages) ? pages : [];
+
+        return candidates.filter(p => {
+            if (!p || !p.webSocketDebuggerUrl) return false;
+            if (p.type !== 'page' && p.type !== 'webview' && p.type !== 'iframe') return false;
+            // Exclude our settings UI if it is exposed as a debuggable target
+            if (p.title && (
+                p.title.includes('Antigravity Auto Accept Settings') ||
+                p.title.includes('Antigravity Multi Purpose Agent Settings')
+            )) {
+                return false;
+            }
+            return true;
+        });
+    }
+
+    async _resolvePort() {
+        if (this.port > 0) {
+            const isConfiguredPortValid = await this._probeCDP(this.port);
+            if (isConfiguredPortValid) {
+                return this.port;
+            }
+        }
+
+        const discoveredPort = await this._discoverPort();
+        if (discoveredPort && discoveredPort !== this.port) {
+            this.log(`Auto-discovered CDP port ${discoveredPort}${this.port > 0 ? ` (configured ${this.port} unavailable)` : ''}`);
+            this.port = discoveredPort;
+        }
+
+        return this.port;
+    }
+
+    async _discoverPort() {
+        const directCandidates = [
+            this._readDevToolsActivePort(),
+            this._scanProcessArgs()
+        ].filter(port => Number.isInteger(port) && port > 0);
+
+        for (const candidate of directCandidates) {
+            if (await this._probeCDP(candidate)) {
+                return candidate;
+            }
+        }
+
+        const scannedCandidates = this._scanListeningPorts();
+        for (const candidate of scannedCandidates) {
+            if (await this._probeCDP(candidate)) {
+                return candidate;
+            }
+        }
+
+        return this.port;
+    }
+
+    _readDevToolsActivePort() {
+        const possiblePaths = [];
+        const home = os.homedir();
+
+        if (process.platform === 'win32') {
+            const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+            const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+            possiblePaths.push(path.join(appData, 'Antigravity', 'DevToolsActivePort'));
+            possiblePaths.push(path.join(localAppData, 'Antigravity', 'User Data', 'DevToolsActivePort'));
+            possiblePaths.push(path.join(localAppData, 'Programs', 'Antigravity', 'DevToolsActivePort'));
+            possiblePaths.push(path.join(appData, 'Code', 'DevToolsActivePort'));
+            possiblePaths.push(path.join(localAppData, 'Code', 'User Data', 'DevToolsActivePort'));
+            possiblePaths.push(path.join(localAppData, 'Programs', 'cursor', 'User Data', 'DevToolsActivePort'));
+        } else if (process.platform === 'darwin') {
+            possiblePaths.push(path.join(home, 'Library', 'Application Support', 'Antigravity', 'DevToolsActivePort'));
+            possiblePaths.push(path.join(home, 'Library', 'Application Support', 'Cursor', 'DevToolsActivePort'));
+            possiblePaths.push(path.join(home, 'Library', 'Application Support', 'Code', 'DevToolsActivePort'));
+        } else {
+            possiblePaths.push(path.join(home, '.config', 'Antigravity', 'DevToolsActivePort'));
+            possiblePaths.push(path.join(home, '.config', 'Cursor', 'DevToolsActivePort'));
+            possiblePaths.push(path.join(home, '.config', 'Code', 'DevToolsActivePort'));
+        }
+
+        for (const filePath of possiblePaths) {
+            try {
+                if (!fs.existsSync(filePath)) continue;
+                const content = fs.readFileSync(filePath, 'utf8').trim();
+                const port = parseInt(content.split(/\r?\n/, 1)[0], 10);
+                if (port > 0 && port < 65536) {
+                    return port;
+                }
+            } catch (e) { }
+        }
+
+        return null;
+    }
+
+    _scanProcessArgs() {
+        const argMatch = process.argv.join(' ').match(/--remote-debugging-port=(\d+)/);
+        if (argMatch) {
+            const port = parseInt(argMatch[1], 10);
+            if (port > 0) return port;
+        }
+
+        const commands = process.platform === 'win32'
+            ? [
+                'powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match \'--remote-debugging-port=\' -and ($_.Name -match \'Antigravity|Cursor|Code|electron\') } | Select-Object -ExpandProperty CommandLine"',
+                'wmic process get CommandLine'
+            ]
+            : [
+                "ps aux | grep -E 'Antigravity|Cursor|Code|electron' | grep -- '--remote-debugging-port=' | grep -v grep"
+            ];
+
+        for (const command of commands) {
+            try {
+                const output = execSync(command, {
+                    encoding: 'utf8',
+                    timeout: 5000,
+                    windowsHide: true
+                });
+                const match = output.match(/--remote-debugging-port=(\d+)/);
+                if (match) {
+                    const port = parseInt(match[1], 10);
+                    if (port > 0) return port;
+                }
+            } catch (e) { }
+        }
+
+        return null;
+    }
+
+    _scanListeningPorts() {
+        try {
+            if (process.platform === 'win32') {
+                const output = execSync(
+                    'powershell -NoProfile -Command "Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique"',
+                    { encoding: 'utf8', timeout: 5000, windowsHide: true }
+                );
+                const ports = output.match(/\d+/g) || [];
+                return [...new Set(ports.map(p => parseInt(p, 10)).filter(p => p >= 1024 && p <= 65535))];
+            }
+
+            const output = execSync('lsof -i -P -n | grep LISTEN', { encoding: 'utf8', timeout: 5000 });
+            const ports = output.match(/:(\d+)\s+\(LISTEN\)/g) || [];
+            return [...new Set(ports.map(entry => parseInt(entry.match(/\d+/)[0], 10)).filter(p => p >= 1024 && p <= 65535))];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    _fetchJson(port, requestPath) {
+        return new Promise((resolve) => {
+            const req = http.get({ hostname: '127.0.0.1', port, path: requestPath, timeout: 800 }, (res) => {
                 let body = '';
                 res.on('data', chunk => body += chunk);
                 res.on('end', () => {
                     try {
-                        const pages = JSON.parse(body);
-                        // Filter for debuggable pages with WebSocket
-                        const filtered = pages.filter(p => {
-                            if (!p.webSocketDebuggerUrl) return false;
-                            if (p.type !== 'page' && p.type !== 'webview' && p.type !== 'iframe') return false;
-                            // Exclude our Settings Panel webview
-                            if (p.title && p.title.includes('Antigravity Multi Purpose Agent Settings')) return false;
-                            return true;
-                        });
-                        resolve(filtered);
-                    } catch (e) { resolve([]); }
+                        resolve(JSON.parse(body));
+                    } catch (e) {
+                        resolve(null);
+                    }
                 });
             });
-            req.on('error', () => resolve([]));
-            req.on('timeout', () => { req.destroy(); resolve([]); });
+            req.on('error', () => resolve(null));
+            req.on('timeout', () => {
+                req.destroy();
+                resolve(null);
+            });
         });
+    }
+
+    async _probeCDP(port) {
+        if (!Number.isInteger(port) || port <= 0) return false;
+
+        const pages = await this._fetchJson(port, '/json/list');
+        if (Array.isArray(pages)) {
+            return true;
+        }
+
+        const version = await this._fetchJson(port, '/json/version');
+        return Boolean(version && typeof version === 'object' && version.webSocketDebuggerUrl);
     }
 
     async _connect(id, url) {
@@ -232,10 +358,6 @@ class CDPHandler {
     }
 
     getConnectionCount() { return this.connections.size; }
-    
-    /**
-     * Get the currently active CDP port (may have been auto-discovered)
-     */
     getActivePort() { return this.port; }
 
     async sendPrompt(text, targetConversation = '') {
@@ -250,12 +372,126 @@ class CDPHandler {
         this.log(`Sending prompt to ${connCount} connection(s)${targetConversation ? ` (target: "${targetConversation}")` : ''}: "${text.substring(0, 50)}..."`);
 
         // Use the newest prompt-sending implementation (probe + verification).
+        // Keep legacy logic below for backwards compatibility, but short-circuit to avoid false positives.
         try {
             return await this._sendPromptV2(text, targetConversation);
         } catch (e) {
             this.log(`Prompt send (v2) failed: ${e?.message || String(e)}`);
             return 0;
         }
+
+        // First, find which connection has the chat input (probe)
+        const connectionResults = [];
+        for (const [id] of this.connections) {
+            try {
+                const hasInput = await this._evaluate(id, `(function(){ 
+                    // Check if we have contenteditable chat input
+                    const editables = document.querySelectorAll('[contenteditable="true"]');
+                    const nonIme = Array.from(editables).filter(e => !(e.className || '').includes('ime'));
+                    if (nonIme.length > 0) {
+                        // Found potential chat input
+                        return JSON.stringify({
+                            hasInput: true,
+                            count: nonIme.length,
+                            width: nonIme[0].getBoundingClientRect().width
+                        });
+                    }
+                    return JSON.stringify({ hasInput: false });
+                })()`);
+
+                const parsed = typeof hasInput.result?.value === 'string'
+                    ? JSON.parse(hasInput.result.value)
+                    : { hasInput: false };
+
+                connectionResults.push({ id, hasInput: parsed.hasInput, details: parsed });
+
+                if (parsed.hasInput) {
+                    this.log(`✓ Connection ${id} has chat input (count: ${parsed.count}, width: ${parsed.width})`);
+                } else {
+                    this.log(`✗ Connection ${id} has no chat input`);
+                }
+            } catch (e) {
+                this.log(`Failed to check ${id}: ${e.message}`);
+                connectionResults.push({ id, hasInput: false, error: e.message });
+            }
+        }
+
+        // Send to connections that have input, or all if none found
+        let targetsWithInput = connectionResults.filter(r => r.hasInput);
+
+        // If workspace preference set, filter targets to matching workspace
+        if (this.workspaceName && targetsWithInput.length > 1) {
+            const workspaceMatches = targetsWithInput.filter(r => {
+                const conn = this.connections.get(r.id);
+                const title = conn?.pageTitle || '';
+                return title.toLowerCase().includes(this.workspaceName.toLowerCase());
+            });
+
+            if (workspaceMatches.length > 0) {
+                this.log(`✓ Found ${workspaceMatches.length} connection(s) matching workspace "${this.workspaceName}"`);
+                targetsWithInput = workspaceMatches;
+            } else {
+                this.log(`⚠️  No connections match workspace "${this.workspaceName}", using all ${targetsWithInput.length} with chat input`);
+            }
+        }
+
+        const targets = targetsWithInput.length > 0 ? targetsWithInput : connectionResults;
+
+        if (targetsWithInput.length === 0) {
+            this.log(`⚠️  WARNING: No connection has visible chat input! Trying all connections anyway...`);
+        } else {
+            this.log(`✓ Found ${targetsWithInput.length} connection(s) with chat input`);
+        }
+
+        let successCount = 0;
+        for (const { id } of targets) {
+            try {
+                const result = await this._evaluate(id, `(async function(){ 
+                    const out = { ok: false, method: null, error: null };
+                    try {
+                        if(typeof window !== "undefined" && window.__autoAcceptSendPromptToConversation) {
+                            const ok = await window.__autoAcceptSendPromptToConversation(${JSON.stringify(text)}, ${JSON.stringify(targetConversation)});
+                            out.ok = !!ok;
+                            out.method = 'sendPromptToConversation';
+                            if(!out.ok) out.error = 'sendPromptToConversation returned falsy';
+                            return JSON.stringify(out);
+                        }
+                        if(typeof window !== "undefined" && window.__autoAcceptSendPrompt) {
+                            const ok = window.__autoAcceptSendPrompt(${JSON.stringify(text)});
+                            out.ok = !!ok;
+                            out.method = 'sendPrompt';
+                            if(!out.ok) out.error = 'sendPrompt returned falsy';
+                            return JSON.stringify(out);
+                        }
+                        out.error = 'no send functions found';
+                        return JSON.stringify(out);
+                    } catch (e) {
+                        out.error = (e && e.message) ? e.message : String(e);
+                        return JSON.stringify(out);
+                    }
+                })()`);
+
+                const raw = result?.result?.value;
+                let parsed = null;
+                if (typeof raw === 'string') {
+                    try { parsed = JSON.parse(raw); } catch (e) { }
+                }
+
+                if (parsed?.ok) {
+                    successCount++;
+                    this.log(`✓ Prompt sent to ${id} via ${parsed.method}`);
+                } else if (parsed) {
+                    this.log(`✗ Prompt NOT sent to ${id} via ${parsed.method || 'unknown'}: ${parsed.error || 'unknown error'}`);
+                } else {
+                    this.log(`✗ Prompt result for ${id}: ${raw || 'no result'}`);
+                }
+            } catch (e) {
+                this.log(`Failed to send prompt to ${id}: ${e.message}`);
+            }
+        }
+
+        this.log(`Prompt send complete: ${successCount}/${targets.length} successful`);
+        return successCount;
     }
 
     async _sendPromptV2(text, targetConversation = '') {
@@ -419,6 +655,19 @@ class CDPHandler {
         return aggregatedStats;
     }
     async getConversations() {
+        const conversations = [];
+        for (const [id] of this.connections) {
+            try {
+                const res = await this._evaluate(id, '(function(){ return window.__autoAcceptState ? window.__autoAcceptState.tabNames : [] })()');
+                if (res?.result?.value) {
+                    // Result is an array of strings
+                    const tabs = res.result.value; // It is already a protocol value which might need more parsing if it is an object description
+                    // Actually Runtime.evaluate returns RemoteObject. 
+                    // If it's an array, it might be returned as subtype array with objectId, OR if we JSON.stringify it it's easier.
+                }
+            } catch (e) { }
+        }
+        // Let's use the robust JSON stringify approach
         return await this._getConversationsRobust();
     }
 

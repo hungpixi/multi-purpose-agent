@@ -1,32 +1,38 @@
-﻿const vscode = require('vscode');
+const vscode = require('vscode');
 const { execSync, spawn } = require('child_process');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
 
-const DEFAULT_CDP_PORT = 0; // Use 0 = auto-pick random available port
+const DEFAULT_CDP_PORT = 0;
 
+/**
+ * Robust cross-platform manager for IDE shortcuts and relaunching
+ */
 class Relauncher {
     constructor(logger = console.log, port = DEFAULT_CDP_PORT) {
         this.platform = os.platform();
         this.logger = logger;
         this.port = port;
-        this.cdpFlag = port > 0 ? `--remote-debugging-port=${port}` : `--remote-debugging-port=0`;
+        this.cdpFlag = port > 0 ? `--remote-debugging-port=${port}` : '--remote-debugging-port=0';
     }
 
     log(msg) {
         this.logger(`[Relauncher] ${msg}`);
     }
 
+    /**
+     * Get the human-readable name of the IDE (Antigravity, VS Code)
+     */
     getIdeName() {
-        const appName = vscode.env.appName || '';
-        if (appName.toLowerCase().includes('antigravity')) return 'Antigravity';
+        const appName = (vscode.env.appName || '').toLowerCase();
+        if (appName.includes('antigravity')) return 'Antigravity';
+        if (appName.includes('cursor')) return 'Cursor';
         return 'Code';
     }
 
     /**
-     * Main entry point: ensures CDP is enabled and relaunches if necessary.
-     * Now defaults to silent mode — no user interaction needed.
+     * Main entry point: ensures CDP is enabled and relaunches if necessary
      */
     async ensureCDPAndRelaunch() {
         this.log('Checking if CDP flag already present...');
@@ -37,39 +43,16 @@ class Relauncher {
             return { success: true, relaunched: false };
         }
 
-        // Best effort: try to modify shortcut for future launches
         this.log('CDP flag missing. Attempting to modify shortcut...');
         const modified = await this.modifyShortcut();
         this.log(modified ? 'Shortcut modified.' : 'Shortcut modification failed (will use direct launch).');
-
-        // Auto-restart without asking (silently)
-        return await this.silentRelaunch();
-    }
-
-    /**
-     * Silent relaunch — restart IDE with CDP flag WITHOUT asking user.
-     * This is the key fix: no more popup, no more "Please launch with..."
-     */
-    async silentRelaunch() {
-        this.log('Performing silent relaunch with CDP flag...');
-
-        // Modify shortcut first for persistence
-        await this.modifyShortcut();
-
-        // Show a brief non-modal notification (auto-dismisses)
-        vscode.window.showInformationMessage(
-            'Antigravity Multi Purpose Agent: Restarting to enable automation...',
-        );
-
-        // Wait a moment for the notification to show
-        await new Promise(r => setTimeout(r, 500));
-
+        vscode.window.showInformationMessage('Antigravity Auto Accept is restarting Antigravity to enable automation.');
         await this.relaunch();
-        return true;
+        return { success: true, relaunched: true };
     }
 
     /**
-     * Check if the current launch has the CDP flag
+     * Platform-specific check if the current launch shortcut has the flag
      */
     async checkShortcutFlag() {
         const args = process.argv.join(' ');
@@ -92,7 +75,7 @@ class Relauncher {
 
     async _modifyWindowsShortcut() {
         const ideName = this.getIdeName();
-        const port = this.port || 0;
+        const port = this.port;
         const script = `
 $ErrorActionPreference = "SilentlyContinue"
 $WshShell = New-Object -ComObject WScript.Shell
@@ -105,7 +88,7 @@ $modified = $false
 foreach ($file in $Shortcuts) {
     try {
         $shortcut = $WshShell.CreateShortcut($file.FullName)
-        if ($shortcut.Arguments -notlike "*--remote-debugging-port=*") {
+        if ($shortcut.Arguments -notlike "*--remote-debugging-port=${port}*") {
             $shortcut.Arguments = "--remote-debugging-port=${port} " + $shortcut.Arguments
             $shortcut.Save()
             $modified = $true
@@ -130,7 +113,7 @@ if ($modified) { Write-Output "MODIFIED" } else { Write-Output "NO_CHANGE" }
 
         fs.writeFileSync(wrapperPath, content, { mode: 0o755 });
         this.log(`Created macOS wrapper at ${wrapperPath}`);
-        return true;
+        return true; // We consider creation a success
     }
 
     async _modifyLinuxShortcut() {
@@ -143,7 +126,7 @@ if ($modified) { Write-Output "MODIFIED" } else { Write-Output "NO_CHANGE" }
         for (const p of desktopPaths) {
             if (fs.existsSync(p)) {
                 let content = fs.readFileSync(p, 'utf8');
-                if (!content.includes('--remote-debugging-port=')) {
+                if (!content.includes(`--remote-debugging-port=${this.port}`)) {
                     content = content.replace(/^Exec=(.*)$/m, `Exec=$1 --remote-debugging-port=${this.port}`);
                     const userPath = path.join(os.homedir(), '.local', 'share', 'applications', path.basename(p));
                     fs.mkdirSync(path.dirname(userPath), { recursive: true });
@@ -156,71 +139,60 @@ if ($modified) { Write-Output "MODIFIED" } else { Write-Output "NO_CHANGE" }
     }
 
     /**
-     * Relaunch the IDE with the CDP flag explicitly.
-     * Uses pure PowerShell to survive process death on Windows (no CMD popup).
+     * Relaunch the IDE with the CDP flag explicitly
      */
     async relaunch() {
         const folders = (vscode.workspace.workspaceFolders || []).map(f => `"${f.uri.fsPath}"`).join(' ');
 
         if (this.platform === 'win32') {
-            // Find the actual Antigravity.exe — search multiple possible locations
-            let launchExe = '';
+            const ideName = this.getIdeName();
             const localAppData = process.env.LOCALAPPDATA || '';
-            const candidates = [
-                path.join(localAppData, 'Programs', 'Antigravity', 'Antigravity.exe'),
-                path.join(localAppData, 'Antigravity', 'Antigravity.exe'),
-                path.join(process.env.PROGRAMFILES || '', 'Antigravity', 'Antigravity.exe'),
-                path.join(process.env['PROGRAMFILES(X86)'] || '', 'Antigravity', 'Antigravity.exe'),
-            ];
-            
-            for (const candidate of candidates) {
-                if (candidate && fs.existsSync(candidate)) {
-                    launchExe = candidate;
-                    break;
-                }
-            }
-            
-            // Fallback: use process.execPath if no Antigravity.exe found
+            const candidates = ideName === 'Antigravity'
+                ? [
+                    path.join(localAppData, 'Programs', 'Antigravity', 'Antigravity.exe'),
+                    path.join(localAppData, 'Antigravity', 'Antigravity.exe'),
+                    path.join(process.env.PROGRAMFILES || '', 'Antigravity', 'Antigravity.exe'),
+                    path.join(process.env['PROGRAMFILES(X86)'] || '', 'Antigravity', 'Antigravity.exe')
+                ]
+                : ideName === 'Cursor'
+                    ? [
+                        path.join(localAppData, 'Programs', 'cursor', 'Cursor.exe'),
+                        path.join(localAppData, 'cursor', 'Cursor.exe')
+                    ]
+                    : [
+                        path.join(localAppData, 'Programs', 'Microsoft VS Code', 'Code.exe'),
+                        path.join(process.env.PROGRAMFILES || '', 'Microsoft VS Code', 'Code.exe')
+                    ];
+
+            let launchExe = candidates.find(candidate => candidate && fs.existsSync(candidate));
             if (!launchExe) {
                 launchExe = process.execPath;
-                // If execPath points to electron deep inside, try to find the main exe
-                const exeDir = path.dirname(launchExe);
-                const parentExe = path.join(path.dirname(exeDir), 'Antigravity.exe');
-                if (fs.existsSync(parentExe)) {
-                    launchExe = parentExe;
-                }
             }
-            
-            this.log(`Launch exe: ${launchExe}`);
-            
-            // Pure PowerShell approach — NO batch file, NO CMD window
-            // Start-Process with -WindowStyle Hidden ensures zero visual artifacts
+
             const folderArgs = folders ? ` ${folders}` : '';
-            const psCommand = `Start-Process -FilePath '${launchExe.replace(/'/g, "''")}' -ArgumentList '${this.cdpFlag}${folderArgs}' -WindowStyle Normal`;
-            
-            // Use a PowerShell script that sleeps then launches — fully detached
             const psScript = [
                 '$ErrorActionPreference = "SilentlyContinue"',
                 'Start-Sleep -Seconds 3',
-                psCommand
+                `Start-Process -FilePath '${launchExe.replace(/'/g, "''")}' -ArgumentList '${`${this.cdpFlag}${folderArgs}`.replace(/'/g, "''")}' -WindowStyle Normal`
             ].join('; ');
-            
-            this.log(`Relaunch PS: ${psScript}`);
-            
-            // Spawn PowerShell completely hidden and detached
-            const child = spawn('powershell.exe', [
-                '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden',
-                '-ExecutionPolicy', 'Bypass', '-Command', psScript
-            ], {
-                detached: true,
-                stdio: 'ignore',
-                windowsHide: true  // Critical: prevents ANY window from showing
-            });
-            child.unref();
-            
+
+            spawn('powershell.exe', [
+                '-NoProfile',
+                '-NonInteractive',
+                '-WindowStyle',
+                'Hidden',
+                '-ExecutionPolicy',
+                'Bypass',
+                '-Command',
+                psScript
+            ], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
         } else if (this.platform === 'darwin') {
             const ideName = this.getIdeName();
-            const appPath = ideName === 'Code' ? '/Applications/Visual Studio Code.app' : `/Applications/${ideName}.app`;
+            const appPath = ideName === 'Code'
+                ? '/Applications/Visual Studio Code.app'
+                : ideName === 'Cursor'
+                    ? '/Applications/Cursor.app'
+                    : `/Applications/${ideName}.app`;
             const cmd = `sleep 3 && open -a "${appPath}" --args ${this.cdpFlag} ${folders}`;
             spawn('sh', ['-c', cmd], { detached: true, stdio: 'ignore' }).unref();
         } else {
@@ -228,7 +200,6 @@ if ($modified) { Write-Output "MODIFIED" } else { Write-Output "NO_CHANGE" }
             spawn('sh', ['-c', cmd], { detached: true, stdio: 'ignore' }).unref();
         }
 
-        // Quit after giving the detached process time to start
         setTimeout(() => vscode.commands.executeCommand('workbench.action.quit'), 1000);
     }
 

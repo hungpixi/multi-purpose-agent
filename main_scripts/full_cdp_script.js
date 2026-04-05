@@ -1,7 +1,7 @@
-﻿/**
+/**
  * FULL CDP CORE BUNDLE
  * Monolithic script for browser-side injection.
- * Combines utils, analytics, antigravity-mpa, and lifecycle management.
+ * Combines utils, analytics, auto-accept, and lifecycle management.
  */
 (function () {
     "use strict";
@@ -157,6 +157,8 @@
                     bannedCommands: [],
                     stats: createDefaultStats()
                 };
+                // Track keystrokes accurately system-wide to prevent interrupting the user
+                window.addEventListener('keydown', () => { window.__autoAcceptState.lastKeystrokeTime = Date.now(); }, true);
                 log('[Analytics] State initialized');
             } else if (!window.__autoAcceptState.stats) {
                 window.__autoAcceptState.stats = createDefaultStats();
@@ -441,177 +443,40 @@
         return false;
     }
 
-    // --- 3.5 STEP INPUT REQUIRED AUTO-EXPAND ---
-    /**
-     * Antigravity sometimes shows a collapsed "step input required" section.
-     * The user must click to expand it before an Accept/Submit/Enter button appears.
-     * This function auto-expands such sections so the accept loop can click them.
-     */
-    function autoExpandStepInputSections() {
-        try {
-            const docs = getDocuments();
-            for (const doc of docs) {
-                // Strategy 1: Look for collapsed sections with "input required" or "step" text
-                const allElements = doc.querySelectorAll('[class*="collapsed"], [class*="collapsible"], [aria-expanded="false"], details:not([open]), [class*="step"], [class*="input-required"]');
-                for (const el of allElements) {
-                    const text = (el.textContent || '').toLowerCase();
-                    if (text.includes('input') || text.includes('step') || text.includes('required') || text.includes('submit') || text.includes('enter')) {
-                        // Check if it's collapsed (aria-expanded=false or details not open)
-                        if (el.tagName === 'DETAILS' && !el.open) {
-                            el.open = true;
-                            log(`[StepInput] Expanded <details>: "${text.substring(0, 50)}"`);
-                            continue;
-                        }
-                        if (el.getAttribute('aria-expanded') === 'false') {
-                            el.click();
-                            log(`[StepInput] Clicked collapsed element: "${text.substring(0, 50)}"`);
-                            continue;
-                        }
-                        // Check for className-based collapsed state
-                        const cls = (el.className || '').toLowerCase();
-                        if (cls.includes('collapsed') && !cls.includes('expanded')) {
-                            el.click();
-                            log(`[StepInput] Expanded collapsed class: "${text.substring(0, 50)}"`);
-                        }
-                    }
-                }
-
-                // Strategy 2: Look for buttons/clickable elements that reveal input areas
-                // In Antigravity, step input sections often have a clickable header/toggle
-                const toggles = doc.querySelectorAll('[role="button"][aria-expanded="false"], button[aria-expanded="false"]');
-                for (const toggle of toggles) {
-                    const text = (toggle.textContent || '').toLowerCase();
-                    const ariaLabel = (toggle.getAttribute('aria-label') || '').toLowerCase();
-                    const combined = text + ' ' + ariaLabel;
-                    if (combined.includes('input') || combined.includes('step') || combined.includes('required') || combined.includes('expand') || combined.includes('show')) {
-                        toggle.click();
-                        log(`[StepInput] Clicked toggle: "${combined.substring(0, 50)}"`);
-                    }
-                }
-
-                // Strategy 3: Look for "Submit" or textarea inside hidden/collapsed containers
-                // and click their parent container to reveal them
-                const textareas = doc.querySelectorAll('textarea, [contenteditable="true"]');
-                for (const ta of textareas) {
-                    const rect = ta.getBoundingClientRect();
-                    if (rect.height < 5 || rect.width < 50) {
-                        // Textarea exists but is too small (collapsed)
-                        // Try clicking its closest expandable parent
-                        let parent = ta.parentElement;
-                        let depth = 0;
-                        while (parent && depth < 5) {
-                            if (parent.getAttribute('aria-expanded') === 'false' || 
-                                (parent.className || '').toLowerCase().includes('collapsed')) {
-                                parent.click();
-                                log(`[StepInput] Expanded parent of hidden textarea at depth ${depth}`);
-                                break;
-                            }
-                            parent = parent.parentElement;
-                            depth++;
-                        }
-                    }
-                }
-            }
-        } catch (e) {
-            // Silently handle — this is best-effort
-        }
-    }
-
-    // --- 3.6 AUTO-SCROLL CHAT TO BOTTOM ---
-    /**
-     * Antigravity chat panel doesn't always auto-scroll to the bottom
-     * during code generation. This means Accept/Enter/Submit buttons
-     * at the bottom are outside the viewport and may not be rendered
-     * or interactable. This function scrolls all scrollable containers
-     * in the chat area to the bottom.
-     */
-    let _lastScrollTime = 0;
-    function autoScrollChatToBottom() {
-        try {
-            // Throttle: only scroll every 500ms to avoid jank
-            const now = Date.now();
-            if (now - _lastScrollTime < 500) return;
-            _lastScrollTime = now;
-
-            const docs = getDocuments();
-            for (const doc of docs) {
-                // Strategy 1: Find the Antigravity agent panel and scroll it
-                const agentPanel = getAntigravityAgentPanelRoot();
-                if (agentPanel) {
-                    // Find scrollable children inside the panel
-                    const scrollables = agentPanel.querySelectorAll('[class*="scroll"], [class*="chat"], [class*="conversation"], [class*="message"], [class*="output"], [class*="content"]');
-                    for (const el of scrollables) {
-                        if (el.scrollHeight > el.clientHeight + 50) {
-                            // This element is scrollable and has overflow
-                            const isNotAtBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) > 100;
-                            if (isNotAtBottom) {
-                                el.scrollTop = el.scrollHeight;
-                                log(`[Scroll] Scrolled container to bottom (delta: ${el.scrollHeight - el.scrollTop}px)`);
-                            }
-                        }
-                    }
-                    // Also try scrolling the panel itself
-                    if (agentPanel.scrollHeight > agentPanel.clientHeight + 50) {
-                        const isNotAtBottom = (agentPanel.scrollHeight - agentPanel.scrollTop - agentPanel.clientHeight) > 100;
-                        if (isNotAtBottom) {
-                            agentPanel.scrollTop = agentPanel.scrollHeight;
-                            log(`[Scroll] Scrolled agent panel to bottom`);
-                        }
-                    }
-                }
-
-                // Strategy 2: Generic — find any large scrollable container
-                // that looks like a chat/conversation area
-                const allScrollable = doc.querySelectorAll('div, section, main');
-                for (const el of allScrollable) {
-                    try {
-                        const style = window.getComputedStyle(el);
-                        const isScrollable = (style.overflowY === 'auto' || style.overflowY === 'scroll');
-                        const isTallEnough = el.scrollHeight > 500 && el.clientHeight > 200;
-                        const hasOverflow = el.scrollHeight > el.clientHeight + 100;
-                        
-                        if (isScrollable && isTallEnough && hasOverflow) {
-                            const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-                            // Only scroll if we're more than 150px from the bottom
-                            // This threshold prevents scroll fighting with user manual scrolling
-                            if (distanceFromBottom > 150) {
-                                el.scrollTop = el.scrollHeight;
-                            }
-                        }
-                    } catch (e) { /* ignore */ }
-                }
-            }
-        } catch (e) {
-            // Silently handle
-        }
-    }
-
     // --- 4. CLICKING LOGIC ---
     function isAcceptButton(el) {
         const text = (el.textContent || "").trim().toLowerCase();
-        if (text.length === 0 || text.length > 50) return false;
-        const patterns = ['accept', 'run', 'retry', 'apply', 'execute', 'confirm', 'allow once', 'allow', 'submit', 'send'];
-        const rejects = ['skip', 'reject', 'cancel', 'close', 'refine'];
-        if (rejects.some(r => text.includes(r))) return false;
-        if (!patterns.some(p => text.includes(p))) return false;
+        const ariaLabel = (el.getAttribute('aria-label') || "").trim().toLowerCase();
+        const title = (el.getAttribute('title') || "").trim().toLowerCase();
+        const combinedText = `${text} ${ariaLabel} ${title}`.trim();
+
+        if (combinedText.length === 0 || combinedText.length > 150) return false;
+
+        const patterns = ['accept', 'run', 'retry', 'apply', 'execute', 'confirm', 'allow once', 'allow', 'approve', 'yes', 'codicon-play', 'run command'];
+        const rejects = ['skip', 'reject', 'cancel', 'close', 'refine', 'ask every time', 'always ask', 'never ask'];
+
+        if (rejects.some(r => combinedText.includes(r))) return false;
+
+        let isMatch = patterns.some(p => combinedText.includes(p));
+        if (!isMatch && (el.className || '').toLowerCase().includes('play')) isMatch = true;
+        if (!isMatch) return false;
 
         // Check if this is a command execution button by looking for "run command" or similar
-        const isCommandButton = text.includes('run command') || text.includes('execute') || text.includes('run');
+        const isCommandButton = combinedText.includes('run command') || combinedText.includes('execute') || combinedText.includes('run');
 
         // If it's a command button, check if the command is banned
         if (isCommandButton) {
             const nearbyText = findNearbyCommandText(el);
             if (isCommandBanned(nearbyText, el)) {
-                log(`[BANNED] Skipping button: "${text}" - command is banned`);
+                log(`[BANNED] Skipping button: "${combinedText}" - command is banned`);
                 return false;
             }
         }
 
         const style = window.getComputedStyle(el);
         const rect = el.getBoundingClientRect();
-        return style.display !== 'none' && rect.width > 0 && style.pointerEvents !== 'none' && !el.disabled;
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && style.pointerEvents !== 'none' && !el.disabled;
     }
-
     /**
      * Check if an element is still visible in the DOM.
      * @param {Element} el - Element to check
@@ -648,6 +513,12 @@
     }
 
     async function performClick(selectors) {
+        // PREVENT CLICKING WHILE USER IS TYPING (give 4 seconds buffer)
+        const lastKey = window.__autoAcceptState ? window.__autoAcceptState.lastKeystrokeTime : 0;
+        if (Date.now() - (lastKey || 0) < 4000) {
+            return 0; // Silently skip to avoid log spam, user is typing
+        }
+
         const found = [];
         selectors.forEach(s => queryAll(s).forEach(el => found.push(el)));
         let clicked = 0;
@@ -773,14 +644,8 @@
             log(`Starting poll loop...`);
             (async function pollLoop() {
                 while (state.isRunning && state.sessionID === sid) {
-                    // Step 1: Scroll chat to bottom so buttons at the end become visible/rendered
-                    autoScrollChatToBottom();
-                    // Step 2: Auto-expand any collapsed step-input sections
-                    autoExpandStepInputSections();
-                    // Step 3: Click accept/run/submit buttons
-                    await performClick(['button', '[class*="button"]', '[class*="anysphere"]', '[role="button"]']);
-                    // Fast polling: 300ms for snappy response (was 1000ms)
-                    await new Promise(r => setTimeout(r, config.pollInterval || 300));
+                    await performClick(['button', '[class*="button"]', '[class*="anysphere"]']);
+                    await new Promise(r => setTimeout(r, config.pollInterval || 1000));
                 }
             })();
         } catch (e) {
